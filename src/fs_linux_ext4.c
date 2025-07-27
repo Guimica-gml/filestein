@@ -266,6 +266,7 @@ bool try_parse_png(Arena *arena, int device, off_t file_offset, struct fs_files 
 
     while (true) {
         // TODO(nic): we should deallocate the memory used if parsing fails
+        // Maybe not deallocate, but Arena has functions that allow us to reuse the memory
         if (file.bytes.count >= PNG_PARSE_MAX_FILE_SIZE) {
             return false;
         }

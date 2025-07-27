@@ -28,7 +28,7 @@ void fs_hexdump(void *items_, size_t items_count, size_t offset) {
     const unsigned char *items = items_;
     size_t max_row_size = 16;
     for (size_t i = 0; i < items_count; i += max_row_size) {
-        fprintf(stderr, "%016lX | ", i + offset);
+        fprintf(stderr, "%016zX | ", i + offset);
         size_t row_size = (items_count - i >= max_row_size) ? max_row_size : items_count - i;
         size_t actual_size = 0;
         for (size_t j = 0; j < row_size; ++j) {

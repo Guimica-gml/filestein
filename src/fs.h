@@ -32,7 +32,7 @@ struct fs_file_builder {
 };
 
 struct fs_file {
-    char *name; // may be null
+    char *name;
     struct fs_file_builder bytes;
     enum fs_file_type type;
 };

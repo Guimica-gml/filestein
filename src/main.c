@@ -210,13 +210,13 @@ int main(void) {
         GuiListViewEx(file_list_rect, (const char **)file_list.items, file_list.count, &scroll_index, &file_index, NULL);
         GuiUnlock();
 
-        Rectangle mounts_dropdown_rect = { 10, 10, 600, 40 };
+        Rectangle mounts_dropdown_rect = { 10, 10, 800, 40 };
         if (GuiDropdownBox(mounts_dropdown_rect, mount_list.items, &device_index, edit_mode)) {
             edit_mode = !edit_mode;
         }
 
         if (device_index == 0) GuiDisable();
-        Rectangle scan_button_rect = { 620, 10, 100, 40 };
+        Rectangle scan_button_rect = { 820, 10, 100, 40 };
         if (GuiButton(scan_button_rect, "SCAN")) {
             ui_text_list_reset(&file_list);
             file_index = -1;
