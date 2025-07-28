@@ -4,7 +4,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-bool fs_get_mount_points(Arena *arena, struct fs_mount_points *mount_points) {
+bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
     char buffer[FS_PATH_CAP] = {0};
     HANDLE first_vol = FindFirstVolume(buffer, FS_PATH_CAP);
     if (first_vol == INVALID_HANDLE_VALUE) {
@@ -38,7 +38,7 @@ bool fs_get_mount_points(Arena *arena, struct fs_mount_points *mount_points) {
 
 #define SECTOR_SIZE 512
 
-void *fs_scan_mount_point(Arena *arena, struct fs_mount_point *mount_point, struct fs_files *files) {
+void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *files) {
     HANDLE device = CreateFile(mount_point->device_path,
                                GENERIC_READ,
                                FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -64,7 +64,7 @@ void *fs_scan_mount_point(Arena *arena, struct fs_mount_point *mount_point, stru
     return NULL;
 }
 
-struct fs_progress_report fs_scan_get_progress_report(void *id) {
+Fs_Progress_Report fs_scan_get_progress_report(void *id) {
     (void) id;
-    return (struct fs_progress_report) {0};
+    return (Fs_Progress_Report) {0};
 }

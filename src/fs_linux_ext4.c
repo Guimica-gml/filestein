@@ -21,7 +21,7 @@
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 
-bool fs_get_mount_points(Arena *arena, struct fs_mount_points *mount_points) {
+bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
     bool result = true;
     const char *mounts_filepath = "/proc/mounts";
 
@@ -47,7 +47,7 @@ bool fs_get_mount_points(Arena *arena, struct fs_mount_points *mount_points) {
             continue;
         }
 
-        struct fs_mount_point mount_point = {0};
+        Fs_Mount_Point mount_point = {0};
         memcpy(mount_point.path, path.data, min(path.count, FS_PATH_CAP));
         memcpy(mount_point.device_path, device_path.data, min(device_path.count, FS_PATH_CAP));
 
@@ -60,16 +60,16 @@ defer:
     return result;
 }
 
-struct file_offs {
+typedef struct {
     off_t *items;
     size_t count;
     size_t capacity;
-};
+} File_Offs;
 
 #define FILE_SET_BUCKET_CAP 4096
-struct file_set {
-    struct file_offs bucket[FILE_SET_BUCKET_CAP];
-};
+typedef struct {
+    File_Offs bucket[FILE_SET_BUCKET_CAP];
+} File_Set;
 
 size_t hash_bytes(void *buf, size_t buf_size) {
     size_t hash = 17;
@@ -79,17 +79,17 @@ size_t hash_bytes(void *buf, size_t buf_size) {
     return hash;
 }
 
-void file_set_add(Arena *arena, struct file_set *set, off_t file_offset) {
+void file_set_add(Arena *arena, File_Set *set, off_t file_offset) {
     size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
-    struct file_offs *file_offs = &set->bucket[index];
+    File_Offs *file_offs = &set->bucket[index];
     // Usually we would need to check if the value is already there
     // but in our case we know it's not necessary
     arena_da_append(arena, file_offs, file_offset);
 }
 
-bool file_set_contains(struct file_set *set, off_t file_offset) {
+bool file_set_contains(File_Set *set, off_t file_offset) {
     size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
-    struct file_offs *file_offs = &set->bucket[index];
+    File_Offs *file_offs = &set->bucket[index];
     for (size_t i = 0; i < file_offs->count; ++i) {
         if (file_offs->items[i] == file_offset) {
             return true;
@@ -102,7 +102,7 @@ static pthread_mutex_t inode_scan_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t chunk_scan_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t progress_report_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void scan_extent(Arena *arena, int device, off_t extent_offset, size_t block_size, struct file_set *file_set) {
+void scan_extent(Arena *arena, int device, off_t extent_offset, size_t block_size, File_Set *file_set) {
     struct ext4_extent_header header;
     ssize_t bytes_read = pread(device, &header, sizeof(header), extent_offset);
     assert(bytes_read == sizeof(header));
@@ -135,7 +135,7 @@ void scan_extent(Arena *arena, int device, off_t extent_offset, size_t block_siz
     }
 }
 
-void scan_inode(Arena *arena, int device, off_t inode_offset, size_t block_size, struct file_set *file_set) {
+void scan_inode(Arena *arena, int device, off_t inode_offset, size_t block_size, File_Set *file_set) {
     struct ext4_inode inode;
     size_t bytes_read = pread(device, &inode, sizeof(inode), inode_offset);
     assert(bytes_read == sizeof(inode));
@@ -152,13 +152,13 @@ void scan_inode(Arena *arena, int device, off_t inode_offset, size_t block_size,
     }
 }
 
-struct threads {
+typedef struct {
     pthread_t *items;
     size_t count;
     size_t capacity;
-};
+} Threads;
 
-struct scan_inode_thread_info {
+typedef struct {
     Arena *arena;
     int device;
 
@@ -168,12 +168,12 @@ struct scan_inode_thread_info {
     size_t block_groups_count;
     size_t inodes_per_group;
 
-    struct fs_progress_bar *progress_bar;
+    Fs_Progress_Bar *progress_bar;
     struct ext4_group_desc *group_descs;
-    struct file_set *file_set;
-};
+    File_Set *file_set;
+} Scan_Inode_Thread_Info;
 
-struct scan_chunk_thread_info {
+typedef struct {
     Arena *arena;
     int device;
 
@@ -181,20 +181,20 @@ struct scan_chunk_thread_info {
     size_t chunk_offset;
     size_t blocks_count;
 
-    struct fs_progress_bar *progress_bar;
-    struct file_set *file_set;
-    struct fs_files *files;
-};
+    Fs_Progress_Bar *progress_bar;
+    File_Set *file_set;
+    Fs_Files *files;
+} Scan_Chunk_Thread_Info;
 
-struct scan_device_thread_info {
+typedef struct {
     Arena *arena;
-    struct fs_progress_report progress_report;
-    struct fs_mount_point *mount_point;
-    struct fs_files *files;
-};
+    Fs_Progress_Report progress_report;
+    Fs_Mount_Point *mount_point;
+    Fs_Files *files;
+} Scan_Device_Thread_Info;
 
 void *start_scan_inode_thread(void *arg) {
-    struct scan_inode_thread_info *info = arg;
+    Scan_Inode_Thread_Info *info = arg;
 
     for (size_t i = 0; i < info->block_groups_count; ++i) {
         struct ext4_group_desc group_desc = info->group_descs[info->block_groups_index + i];
@@ -214,12 +214,12 @@ void *start_scan_inode_thread(void *arg) {
     return NULL;
 }
 
-typedef bool(*try_parse_file_func)(Arena *arena, int device, off_t file_offset, struct fs_files *files);
+typedef bool(*Try_Parse_File_Func)(Arena *arena, int device, off_t file_offset, Fs_Files *files);
 
-struct file_header_entry {
+typedef struct {
     Nob_String_View magic;
-    try_parse_file_func try_parse_file;
-};
+    Try_Parse_File_Func try_parse_file;
+} File_Header_Entry;
 
 uint32_t read_uint32_be(int device) {
     uint8_t bytes[4];
@@ -235,8 +235,8 @@ uint32_t read_uint32_be(int device) {
 #define PNG_PARSE_MAX_FILE_SIZE (4096 * 1024 * 10)
 #define PNG_PARSE_MAX_CHUNK_SIZE (4096 * 10)
 
-bool try_parse_png(Arena *arena, int device, off_t file_offset, struct fs_files *files) {
-    struct fs_file file = {0};
+bool try_parse_png(Arena *arena, int device, off_t file_offset, Fs_Files *files) {
+    Fs_File file = {0};
     file.type = FS_FILE_TYPE_PNG;
 
     const char *name_fmt = "0x%016lX";
@@ -313,13 +313,13 @@ bool try_parse_png(Arena *arena, int device, off_t file_offset, struct fs_files 
 }
 
 static_assert(FS_FILE_TYPE_COUNT == 2, "Amount of file types changed, please update code here!");
-struct file_header_entry file_header_entries[] = {
+static File_Header_Entry file_header_entries[] = {
     [FS_FILE_TYPE_UNKNOWN] = { .magic = SV(""),                                 .try_parse_file = NULL },
     [FS_FILE_TYPE_PNG]     = { .magic = SV("\x89\x50\x4E\x47\x0D\x0A\x1A\x0A"), .try_parse_file = try_parse_png },
 };
 
 void *start_scan_chunk_thread(void *arg) {
-    struct scan_chunk_thread_info *info = (void*)arg;
+    Scan_Chunk_Thread_Info *info = (void*)arg;
 
     size_t max_magic_size = 0;
     for (size_t i = 0; i < NOB_ARRAY_LEN(file_header_entries); ++i) {
@@ -344,7 +344,7 @@ void *start_scan_chunk_thread(void *arg) {
         }
 
         for (size_t j = 1; j < FS_FILE_TYPE_COUNT; ++j) {
-            struct file_header_entry header_entry = file_header_entries[j];
+            File_Header_Entry header_entry = file_header_entries[j];
             if (bytes_read < (ssize_t) header_entry.magic.count || memcmp(magic, header_entry.magic.data, header_entry.magic.count) != 0) {
                 continue;
             }
@@ -357,10 +357,10 @@ void *start_scan_chunk_thread(void *arg) {
 }
 
 void *start_scan_device_thread(void *arg) {
-    struct scan_device_thread_info *info = (void*)arg;
+    Scan_Device_Thread_Info *info = (void*)arg;
 
     int result = 0;
-    Arena temp_arena = {0};
+    Arena scratch = {0};
     Arena file_set_arena = {0};
 
     int device = open(info->mount_point->device_path, O_RDONLY | O_LARGEFILE);
@@ -399,19 +399,18 @@ void *start_scan_device_thread(void *arg) {
     size_t block_group_count = partition_size / block_group_size;
 
     size_t group_descs_size = block_group_count * sizeof(struct ext4_group_desc);
-    struct ext4_group_desc *group_descs = arena_alloc(&temp_arena, group_descs_size);
+    struct ext4_group_desc *group_descs = arena_alloc(&scratch, group_descs_size);
     bytes_read = pread(device, group_descs, group_descs_size, 0x1000);
     assert(bytes_read == (ssize_t) group_descs_size);
 
     // Very big struct
-    struct file_set *file_set = arena_alloc(&file_set_arena, sizeof(struct file_set));
-    memset(file_set, 0, sizeof(struct file_set));
+    File_Set *file_set = arena_alloc(&file_set_arena, sizeof(File_Set));
+    memset(file_set, 0, sizeof(File_Set));
 
     long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     cpu_count = max(1, cpu_count);
 
-    struct threads threads = {0};
-
+    Threads threads = {0};
     {
         size_t block_groups_per_cpu = block_group_count / cpu_count;
         size_t rest = block_group_count % cpu_count;
@@ -420,11 +419,11 @@ void *start_scan_device_thread(void *arg) {
         info->progress_report.bars[0].max_value = block_group_count;
         pthread_mutex_unlock(&progress_report_mutex);
 
-        struct scan_inode_thread_info *thread_infos = arena_alloc(&temp_arena, sizeof(struct scan_inode_thread_info) * cpu_count);
-        memset(thread_infos, 0, sizeof(struct scan_inode_thread_info) * cpu_count);
+        Scan_Inode_Thread_Info *thread_infos = arena_alloc(&scratch, sizeof(Scan_Inode_Thread_Info) * cpu_count);
+        memset(thread_infos, 0, sizeof(Scan_Inode_Thread_Info) * cpu_count);
 
         for (size_t i = 0; i < (size_t) cpu_count; ++i) {
-            thread_infos[i] = (struct scan_inode_thread_info) {
+            thread_infos[i] = (Scan_Inode_Thread_Info) {
                 .arena = &file_set_arena,
                 .device = device,
                 .inode_size = inode_size,
@@ -445,7 +444,7 @@ void *start_scan_device_thread(void *arg) {
                 fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
                 nob_return_defer(1);
             }
-            arena_da_append(&temp_arena, &threads, thread_id);
+            arena_da_append(&scratch, &threads, thread_id);
         }
 
         for (size_t i = 0; i < threads.count; ++i) {
@@ -463,11 +462,11 @@ void *start_scan_device_thread(void *arg) {
         info->progress_report.bars[1].max_value = total_block_count;
         pthread_mutex_unlock(&progress_report_mutex);
 
-        struct scan_chunk_thread_info *thread_infos = arena_alloc(&temp_arena, sizeof(struct scan_chunk_thread_info) * cpu_count);
-        memset(thread_infos, 0, sizeof(struct scan_chunk_thread_info) * cpu_count);
+        Scan_Chunk_Thread_Info *thread_infos = arena_alloc(&scratch, sizeof(Scan_Chunk_Thread_Info) * cpu_count);
+        memset(thread_infos, 0, sizeof(Scan_Chunk_Thread_Info) * cpu_count);
 
         for (size_t i = 0; i < (size_t) cpu_count; ++i) {
-            thread_infos[i] = (struct scan_chunk_thread_info) {
+            thread_infos[i] = (Scan_Chunk_Thread_Info) {
                 .arena = info->arena,
                 .device = device,
                 .block_size = block_size,
@@ -486,7 +485,7 @@ void *start_scan_device_thread(void *arg) {
                 fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
                 nob_return_defer(1);
             }
-            arena_da_append(&temp_arena, &threads, thread_id);
+            arena_da_append(&scratch, &threads, thread_id);
         }
 
         for (size_t i = 0; i < threads.count; ++i) {
@@ -499,15 +498,15 @@ defer:
     info->progress_report.done = true;
     pthread_mutex_unlock(&progress_report_mutex);
 
-    arena_free(&temp_arena);
+    arena_free(&scratch);
     arena_free(&file_set_arena);
     if (device >= 0) close(device);
     return (void*)(uintptr_t)result;
 }
 
-void *fs_scan_mount_point(Arena *arena, struct fs_mount_point *mount_point, struct fs_files *files) {
-    struct scan_device_thread_info *thread_info = arena_alloc(arena, sizeof(struct scan_device_thread_info));
-    memset(thread_info, 0, sizeof(struct scan_device_thread_info));
+void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *files) {
+    Scan_Device_Thread_Info *thread_info = arena_alloc(arena, sizeof(Scan_Device_Thread_Info));
+    memset(thread_info, 0, sizeof(Scan_Device_Thread_Info));
 
     thread_info->arena = arena;
     thread_info->mount_point = mount_point;
@@ -523,9 +522,9 @@ void *fs_scan_mount_point(Arena *arena, struct fs_mount_point *mount_point, stru
     return thread_info;
 }
 
-struct fs_progress_report fs_scan_get_progress_report(void *id) {
+Fs_Progress_Report fs_scan_get_progress_report(void *id) {
     pthread_mutex_lock(&progress_report_mutex);
-    struct fs_progress_report report = ((struct scan_device_thread_info *)id)->progress_report;
+    Fs_Progress_Report report = ((Scan_Device_Thread_Info *)id)->progress_report;
     pthread_mutex_unlock(&progress_report_mutex);
     return report;
 }

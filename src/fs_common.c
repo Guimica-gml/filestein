@@ -4,7 +4,7 @@
 #include <ctype.h>
 #include <assert.h>
 
-const char *fs_file_type_get_ext(enum fs_file_type type) {
+const char *fs_file_type_get_ext(Fs_File_Type type) {
     switch (type) {
     case FS_FILE_TYPE_UNKNOWN: return "bin";
     case FS_FILE_TYPE_PNG: return "png";
@@ -14,7 +14,7 @@ const char *fs_file_type_get_ext(enum fs_file_type type) {
     }
 }
 
-const char *fs_file_type_to_cstr(enum fs_file_type type) {
+const char *fs_file_type_to_cstr(Fs_File_Type type) {
     switch (type) {
     case FS_FILE_TYPE_UNKNOWN: return "UNKNOWN";
     case FS_FILE_TYPE_PNG: return "PNG";

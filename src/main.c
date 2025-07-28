@@ -18,18 +18,18 @@
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 
-enum ui_preview_kind {
+typedef enum {
     UI_PREVIEW_BIN,
     UI_PREVIEW_PNG,
-};
+} Ui_Preview_Kind;
 
-struct ui_preview {
-    enum ui_preview_kind kind;
+typedef struct {
+    Ui_Preview_Kind kind;
     Image image;
     Texture texture;
-};
+} Ui_Preview;
 
-void ui_load_preview(struct ui_preview *preview, struct fs_file *file) {
+void ui_load_preview(Ui_Preview *preview, Fs_File *file) {
     switch (file->type) {
     case FS_FILE_TYPE_PNG: {
         preview->image = LoadImageFromMemory(".png", file->bytes.items, file->bytes.count);
@@ -41,7 +41,7 @@ void ui_load_preview(struct ui_preview *preview, struct fs_file *file) {
     }
 }
 
-void ui_unload_preview(struct ui_preview *preview) {
+void ui_unload_preview(Ui_Preview *preview) {
     switch (preview->kind) {
     case UI_PREVIEW_PNG:
         if (IsImageValid(preview->image)) UnloadImage(preview->image);
@@ -77,7 +77,7 @@ void ui_text_list_add(struct ui_text_list *list, const char *text, const char *s
     nob_da_append(list, full_text);
 }
 
-void DrawProgressReport(struct fs_progress_report report) {
+void DrawProgressReport(Fs_Progress_Report report) {
     int margin = 10;
     int bar_h = 30;
 
@@ -107,7 +107,7 @@ void DrawProgressReport(struct fs_progress_report report) {
     }
 }
 
-void DrawFileInfo(Rectangle rect, struct ui_preview *preview, struct fs_file *file) {
+void DrawFileInfo(Rectangle rect, Ui_Preview *preview, Fs_File *file) {
     int button_h = 60;
     int label_h = 70;
     int margin = 10;
@@ -153,8 +153,8 @@ int main(void) {
     Arena arena = {0};
     Arena recovered_files_arena = {0};
 
-    struct fs_files recovered_files = {0};
-    struct fs_mount_points mount_points = {0};
+    Fs_Files recovered_files = {0};
+    Fs_Mount_Points mount_points = {0};
     if (!fs_get_mount_points(&arena, &mount_points)) {
         fprintf(stderr, "Error: could not get mount points\n");
         exit(1);
@@ -168,13 +168,13 @@ int main(void) {
     Nob_String_Builder mount_list = {0};
     nob_sb_append_cstr(&mount_list, "CHOOSE DEVICE;");
     for (size_t i = 0; i < mount_points.count; ++i) {
-        struct fs_mount_point *mount_point = &mount_points.items[i];
+        Fs_Mount_Point *mount_point = &mount_points.items[i];
         nob_sb_appendf(&mount_list, "%s (%s)", mount_point->path, mount_point->device_path);
         if (i < mount_points.count - 1) nob_sb_append_cstr(&mount_list, ";");
     }
     nob_sb_append_null(&mount_list);
 
-    struct ui_preview preview = {0};
+    Ui_Preview preview = {0};
     struct ui_text_list file_list = {0};
     int scroll_index = 0;
     int last_file_index = -1;
@@ -223,7 +223,7 @@ int main(void) {
             recovered_files.count = 0;
             arena_reset(&recovered_files_arena);
 
-            struct fs_mount_point *mount_point = &mount_points.items[device_index - 1];
+            Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
             scan_id = fs_scan_mount_point(&recovered_files_arena, mount_point, &recovered_files);
             if (scan_id == NULL) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
@@ -239,7 +239,7 @@ int main(void) {
         file_info_rect.height -= RAYGUI_WINDOWBOX_STATUSBAR_HEIGHT;
 
         if (file_index >= 0 && (size_t) file_index < recovered_files.count) {
-            struct fs_file *file = &recovered_files.items[file_index];
+            Fs_File *file = &recovered_files.items[file_index];
             DrawFileInfo(file_info_rect, &preview, file);
         } else {
             GuiSetStyle(LABEL, TEXT_ALIGNMENT, TEXT_ALIGN_MIDDLE);
@@ -250,16 +250,16 @@ int main(void) {
         if (last_file_index != file_index) {
             ui_unload_preview(&preview);
             if (file_index >= 0) {
-                struct fs_file *file = &recovered_files.items[file_index];
+                Fs_File *file = &recovered_files.items[file_index];
                 ui_load_preview(&preview, file);
             }
         }
 
         if (scan_id != NULL) {
-            struct fs_progress_report report = fs_scan_get_progress_report(scan_id);
+            Fs_Progress_Report report = fs_scan_get_progress_report(scan_id);
             if (report.done) {
                 for (size_t i = 0; i < recovered_files.count; ++i) {
-                    struct fs_file *file = &recovered_files.items[i];
+                    Fs_File *file = &recovered_files.items[i];
                     ui_text_list_add(&file_list, file->name, fs_file_type_to_cstr(file->type));
                 }
                 scan_id = NULL;
