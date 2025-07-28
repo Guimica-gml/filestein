@@ -361,7 +361,6 @@ void *start_scan_device_thread(void *arg) {
 
     int result = 0;
     Arena scratch = {0};
-    Arena file_set_arena = {0};
 
     int device = open(info->mount_point->device_path, O_RDONLY | O_LARGEFILE);
     if (device < 0) {
@@ -404,13 +403,12 @@ void *start_scan_device_thread(void *arg) {
     assert(bytes_read == (ssize_t) group_descs_size);
 
     // Very big struct
-    File_Set *file_set = arena_alloc(&file_set_arena, sizeof(File_Set));
+    File_Set *file_set = arena_alloc(&scratch, sizeof(File_Set));
     memset(file_set, 0, sizeof(File_Set));
 
     long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     cpu_count = max(1, cpu_count);
 
-    Threads threads = {0};
     {
         size_t block_groups_per_cpu = block_group_count / cpu_count;
         size_t rest = block_group_count % cpu_count;
@@ -422,9 +420,12 @@ void *start_scan_device_thread(void *arg) {
         Scan_Inode_Thread_Info *thread_infos = arena_alloc(&scratch, sizeof(Scan_Inode_Thread_Info) * cpu_count);
         memset(thread_infos, 0, sizeof(Scan_Inode_Thread_Info) * cpu_count);
 
+        pthread_t *threads = arena_alloc(&scratch, sizeof(pthread_t) * cpu_count);
+        memset(threads, 0, sizeof(pthread_t) * cpu_count);
+
         for (size_t i = 0; i < (size_t) cpu_count; ++i) {
             thread_infos[i] = (Scan_Inode_Thread_Info) {
-                .arena = &file_set_arena,
+                .arena = &scratch,
                 .device = device,
                 .inode_size = inode_size,
                 .block_size = block_size,
@@ -439,20 +440,17 @@ void *start_scan_device_thread(void *arg) {
                 thread_infos[i].block_groups_count += rest;
             }
 
-            pthread_t thread_id;
-            if (pthread_create(&thread_id, NULL, start_scan_inode_thread, &thread_infos[i])) {
+            if (pthread_create(&threads[i], NULL, start_scan_inode_thread, &thread_infos[i])) {
                 fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
                 nob_return_defer(1);
             }
-            arena_da_append(&scratch, &threads, thread_id);
         }
 
-        for (size_t i = 0; i < threads.count; ++i) {
-            pthread_join(threads.items[i], NULL);
+        for (size_t i = 0; i < (size_t) cpu_count; ++i) {
+            pthread_join(threads[i], NULL);
         }
     }
 
-    threads.count = 0;
     {
         size_t total_block_count = partition_size / block_size;
         size_t blocks_per_chunk = total_block_count / cpu_count;
@@ -464,6 +462,9 @@ void *start_scan_device_thread(void *arg) {
 
         Scan_Chunk_Thread_Info *thread_infos = arena_alloc(&scratch, sizeof(Scan_Chunk_Thread_Info) * cpu_count);
         memset(thread_infos, 0, sizeof(Scan_Chunk_Thread_Info) * cpu_count);
+
+        pthread_t *threads = arena_alloc(&scratch, sizeof(pthread_t) * cpu_count);
+        memset(threads, 0, sizeof(pthread_t) * cpu_count);
 
         for (size_t i = 0; i < (size_t) cpu_count; ++i) {
             thread_infos[i] = (Scan_Chunk_Thread_Info) {
@@ -480,16 +481,14 @@ void *start_scan_device_thread(void *arg) {
                 thread_infos[i].blocks_count += rest;
             }
 
-            pthread_t thread_id;
-            if (pthread_create(&thread_id, NULL, start_scan_chunk_thread, &thread_infos[i])) {
+            if (pthread_create(&threads[i], NULL, start_scan_chunk_thread, &thread_infos[i])) {
                 fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
                 nob_return_defer(1);
             }
-            arena_da_append(&scratch, &threads, thread_id);
         }
 
-        for (size_t i = 0; i < threads.count; ++i) {
-            pthread_join(threads.items[i], NULL);
+        for (size_t i = 0; i < (size_t) cpu_count; ++i) {
+            pthread_join(threads[i], NULL);
         }
     }
 
@@ -499,7 +498,6 @@ defer:
     pthread_mutex_unlock(&progress_report_mutex);
 
     arena_free(&scratch);
-    arena_free(&file_set_arena);
     if (device >= 0) close(device);
     return (void*)(uintptr_t)result;
 }
