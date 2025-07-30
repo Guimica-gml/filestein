@@ -25,9 +25,9 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
         }
 
         if (strcmp(fs_type, "NTFS") == 0) {
-            struct fs_mount_point mount_point = {0};
+            Fs_Mount_Point mount_point = {0};
             strcpy(mount_point.path, volume_letter);
-            strcpy(mount_point.device_path, buffer);
+            memcpy(mount_point.device_path, buffer, strlen(buffer) - 1);
             arena_da_append(arena, mount_points, mount_point);
         }
     } while (FindNextVolume(first_vol, buffer, FS_PATH_CAP));
@@ -44,7 +44,7 @@ void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *f
                                FILE_SHARE_READ | FILE_SHARE_WRITE,
                                NULL,
                                OPEN_EXISTING,
-                               FILE_FLAG_BACKUP_SEMANTICS,
+                               FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
                                NULL);
     if (device == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "Error: could not open device: %lu\n", GetLastError());
