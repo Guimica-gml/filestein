@@ -1,5 +1,6 @@
 #include "./fs.h"
 #include "./nob.h"
+#include "./ntfs.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -36,9 +37,8 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
     return true;
 }
 
-#define SECTOR_SIZE 512
-
 void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *files) {
+    void *result = NULL;
     HANDLE device = CreateFile(mount_point->device_path,
                                GENERIC_READ,
                                FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -48,20 +48,47 @@ void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *f
                                NULL);
     if (device == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "Error: could not open device: %lu\n", GetLastError());
-        return NULL;
+        nob_return_defer(NULL);
     }
 
-    unsigned char buf[SECTOR_SIZE];
+    struct ntfs_pbs pbs = {0};
+
     DWORD rd;
-    if (!ReadFile(device, buf, SECTOR_SIZE, &rd, NULL)) {
+    if (!ReadFile(device, &pbs, sizeof(pbs), &rd, NULL)) {
         fprintf(stderr, "Error: could not read device: %lu\n", GetLastError());
-        CloseHandle(device);
-        return NULL;
+        nob_return_defer(NULL);
+    }
+    fs_hexdump(&pbs, sizeof(pbs), 0);
+
+    printf("-------------\n");
+    printf("magic: 0x%08zX\n", pbs.magic);
+    printf("bytes per sector: %d\n", pbs.bytes_per_sector);
+    printf("sectors per cluster: %d\n", pbs.sectors_per_cluster);
+    printf("mft cluster number: %lld\n", pbs.mft_cluster_number);
+    fflush(stderr);
+    fflush(stdout);
+
+    int32_t mft_offset = pbs.mft_cluster_number * pbs.sectors_per_cluster * pbs.bytes_per_sector;
+    if (SetFilePointer(device, mft_offset, NULL, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
+        fprintf(stderr, "Error: could not set file pointer: %lu\n", GetLastError());
+        nob_return_defer(NULL);
+    }
+    fflush(stderr);
+    fflush(stdout);
+
+    printf("-------------\n");
+    unsigned char buf[1024];
+    if (!ReadFile(device, buf, sizeof(buf), &rd, NULL)) {
+        fprintf(stderr, "Error: could not read device: %lu\n", GetLastError());
+        nob_return_defer(NULL);
     }
     fs_hexdump(buf, sizeof(buf), 0);
+    fflush(stderr);
+    fflush(stdout);
 
-    CloseHandle(device);
-    return NULL;
+defer:
+    if (device != INVALID_HANDLE_VALUE) CloseHandle(device);
+    return result;
 }
 
 Fs_Progress_Report fs_scan_get_progress_report(void *id) {

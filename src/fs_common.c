@@ -28,23 +28,23 @@ void fs_hexdump(void *items_, size_t items_count, size_t offset) {
     const unsigned char *items = items_;
     size_t max_row_size = 16;
     for (size_t i = 0; i < items_count; i += max_row_size) {
-        fprintf(stderr, "%016zX | ", i + offset);
+        printf("%016zX | ", i + offset);
         size_t row_size = (items_count - i >= max_row_size) ? max_row_size : items_count - i;
         size_t actual_size = 0;
         for (size_t j = 0; j < row_size; ++j) {
-            actual_size += fprintf(stderr, "%02X ", items[i + j]);
+            actual_size += printf("%02X ", items[i + j]);
             if (((j + 1) % (max_row_size / 2)) == 0 && j < row_size - 1) {
-                actual_size += fprintf(stderr, " ");
+                actual_size += printf(" ");
             }
         }
         size_t expected_size = 3 * max_row_size + 1;
         for (size_t j = 0; j < (expected_size - actual_size); ++j) {
-            fprintf(stderr, " ");
+            printf(" ");
         }
-        fprintf(stderr, "| ");
+        printf("| ");
         for (size_t j = 0; j < row_size; ++j) {
-            fprintf(stderr, "%c", isprint(items[i + j]) ? items[i + j] : '.');
+            printf("%c", isprint(items[i + j]) ? items[i + j] : '.');
         }
-        fprintf(stderr, "\n");
+        printf("\n");
     }
 }
