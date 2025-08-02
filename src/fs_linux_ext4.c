@@ -249,9 +249,12 @@ bool try_parse_png(Arena *arena, int device, off_t file_offset, Fs_Files *files)
     snprintf(file.name, name_size, name_fmt, file_offset);
     file.name[name_size] = '\0';
 
+    pthread_mutex_lock(&chunk_scan_mutex);
     if (lseek64(device, file_offset, SEEK_SET) < 0) {
+        pthread_mutex_unlock(&chunk_scan_mutex);
         return false;
     }
+    pthread_mutex_unlock(&chunk_scan_mutex);
 
     char *expected_magic = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
     uint8_t end_chunk[4] = { 'I', 'E', 'N', 'D' };
