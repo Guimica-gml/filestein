@@ -1,5 +1,8 @@
-#include "./fs2.h"
+#include "./fs.h"
 #include "./nob.h"
+
+#define min(a, b) (((a) < (b)) ? (a) : (b))
+#define max(a, b) (((a) > (b)) ? (a) : (b))
 
 bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
 #ifdef _WIN32
@@ -24,6 +27,7 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
 
         if (strcmp(fs_type, "NTFS") == 0) {
             Fs_Mount_Point mount_point = {0};
+            mount_point.type = FS_MOUNT_POINT_NTFS;
             strcpy(mount_point.path, volume_letter);
             memcpy(mount_point.device_path, buffer, strlen(buffer) - 1);
             arena_da_append(arena, mount_points, mount_point);
@@ -53,12 +57,20 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
         }
 
         Nob_String_View path = nob_sv_chop_by_delim(&sv, ' ');
-        Nob_String_View type = nob_sv_chop_by_delim(&sv, ' ');
-        if (!nob_sv_eq(type, nob_sv_from_cstr("ext4"))) {
+        Nob_String_View type_sv = nob_sv_chop_by_delim(&sv, ' ');
+
+        // TODO(nic): kind of a hack
+        Fs_Mount_Point_Type type;
+        if (nob_sv_eq(type_sv, nob_sv_from_cstr("ext4"))) {
+            type = FS_MOUNT_POINT_EXT4;
+        } else if (nob_sv_eq(type_sv, nob_sv_from_cstr("fuseblk"))) {
+            type = FS_MOUNT_POINT_NTFS;
+        } else {
             continue;
         }
 
         Fs_Mount_Point mount_point = {0};
+        mount_point.type = type;
         memcpy(mount_point.path, path.data, min(path.count, FS_PATH_CAP));
         memcpy(mount_point.device_path, device_path.data, min(device_path.count, FS_PATH_CAP));
 
@@ -72,12 +84,17 @@ defer:
 #endif
 }
 
-bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
-    if (!fs_create_mutex(&device->mutex)) {
-        return false;
-    }
+bool fs_is_device_valid(Fs_Device *device) {
 #ifdef _WIN32
-    device->handle = CreateFile(
+    return *device != INVALID_HANDLE_VALUE;
+#else
+    return *device >= 0;
+#endif
+}
+
+bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
+#ifdef _WIN32
+    *device = CreateFile(
         mount_point->device_path,
         GENERIC_READ,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -86,55 +103,55 @@ bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
         FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
         NULL
     );
-    return device->handle != INVALID_HANDLE_VALUE;
+    return *device != INVALID_HANDLE_VALUE;
 #else
-    device->handle = open(mount_point->device_path, O_RDONLY | O_LARGEFILE);
-    return device->handle != NULL;
+    *device = open(mount_point->device_path, O_RDONLY | O_LARGEFILE);
+    return *device >= 0;
 #endif
 }
 
 int64_t fs_read_device(Fs_Device *device, void *buf, size_t count) {
-    int64_t result = 0;
-    fs_lock_mutex(&device->mutex);
 #ifdef _WIN32
     DWORD rd;
-    if (!ReadFile(device->handle, buf, count, &rd, NULL)) {
-        nob_return_defer(-1);
+    if (!ReadFile(*device, buf, count, &rd, NULL)) {
+        return -1;
     }
-    result = (int64_t)rd;
+    return (int64_t)rd;
 #else
-    result = read(device->handle, buf, count);
+    return read(*device, buf, count);
 #endif
-defer:
-    fs_unlock_mutex(&device->mutex);
-    return result;
 }
 
 int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset) {
-    if (!fs_set_device_offset(device, offset)) {
+#ifdef _WIN32
+    LARGE_INTEGER l;
+    l.QuadPart = (LONG64)offset;
+    OVERLAPPED overlapped = {0};
+    overlapped.Offset = l.LowPart;
+    overlapped.OffsetHigh = l.HighPart;
+    DWORD rd;
+    if (!ReadFile(*device, buf, count, &rd, &overlapped)) {
         return -1;
     }
-    return fs_read_device(device, buf, count);
+    return (int64_t)rd;
+#else
+    return pread(*device, buf, count, offset);
+#endif
 }
 
 bool fs_set_device_offset(Fs_Device *device, size_t offset) {
-    int64_t result;
-    fs_lock_mutex(&device->mutex);
 #ifdef _WIN32
-    result = SetFilePointer(device->handle, offset, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    return SetFilePointer(*device, offset, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
 #else
-    result = lseek64(device->handle, offset, SEEK_SET) >= 0;
+    return lseek64(*device, offset, SEEK_SET) >= 0;
 #endif
-    fs_unlock_mutex(&device->mutex);
-    return result;
 }
 
 bool fs_close_device(Fs_Device *device) {
-    fs_free_mutex(device->mutex);
 #ifdef _WIN32
-    return CloseHandle(device->handle);
+    return CloseHandle(*device);
 #else
-    return close(device->handle) >= 0;
+    return close(*device) >= 0;
 #endif
 }
 
@@ -185,5 +202,29 @@ bool fs_free_mutex(Fs_Mutex *mutex) {
     return CloseHandle(*mutex);
 #else
     return pthread_mutex_destroy(mutex) >= 0;
+#endif
+}
+
+bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
+#ifdef _WIN32
+    DISK_LENGTH_INFO disk_length_info;
+    DWORD bytes_returned;
+    if (!DeviceIoControl(*device, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &disk_length_info, sizeof(DISK_LENGTH_INFO), &bytes_returned, NULL)) {
+        return false;
+    }
+    *volume_size = diskLengthInfo.Length.QuadPart;
+    return true;
+#else
+    return ioctl(*device, BLKGETSIZE64, volume_size) >= 0;
+#endif
+}
+
+size_t fs_get_cpu_count(void) {
+#ifdef _WIN32
+    DWORD cpu_count = GetCurrentProcessorNumber();
+    return max(1, cpu_count);
+#else
+    long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
+    return max(1, cpu_count);
 #endif
 }

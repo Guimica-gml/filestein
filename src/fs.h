@@ -1,22 +1,44 @@
 #ifndef FS_H_
 #define FS_H_
 
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200809L
+#define _LARGEFILE64_SOURCE
+#endif
+
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #include "./arena.h"
 
-#define FS_PATH_CAP 256
+#ifdef _WIN32
+#include <windows.h>
+typedef HANDLE Fs_Device;
+typedef HANDLE Fs_Mutex;
+typedef HANDLE Fs_Thread;
+#else
+#include <unistd.h>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+#include <pthread.h>
+typedef int Fs_Device;
+typedef pthread_mutex_t Fs_Mutex;
+typedef pthread_t Fs_Thread;
+#endif
 
 typedef enum {
-    FS_FILE_TYPE_UNKNOWN,
-    FS_FILE_TYPE_PNG,
-    FS_FILE_TYPE_COUNT,
-} Fs_File_Type;
+    FS_MOUNT_POINT_EXT4,
+    FS_MOUNT_POINT_NTFS,
+} Fs_Mount_Point_Type;
 
+// TODO(nic): make this arena allocatable
+#define FS_PATH_CAP 2048
 typedef struct {
     char path[FS_PATH_CAP];
     char device_path[FS_PATH_CAP];
+    Fs_Mount_Point_Type type;
 } Fs_Mount_Point;
 
 typedef struct {
@@ -25,43 +47,26 @@ typedef struct {
     size_t capacity;
 } Fs_Mount_Points;
 
-typedef struct {
-    unsigned char *items;
-    size_t count;
-    size_t capacity;
-} Fs_File_Builder;
-
-typedef struct {
-    char *name;
-    Fs_File_Builder bytes;
-    Fs_File_Type type;
-} Fs_File;
-
-typedef struct {
-    Fs_File *items;
-    size_t count;
-    size_t capacity;
-} Fs_Files;
-
-typedef struct {
-    size_t value;
-    size_t max_value;
-} Fs_Progress_Bar;
-
-#define FS_PROGRESS_BAR_CAP 8
-typedef struct {
-    bool done;
-    size_t bars_count;
-    Fs_Progress_Bar bars[FS_PROGRESS_BAR_CAP];
-} Fs_Progress_Report;
-
 bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points);
-void *fs_scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Fs_Files *files);
-Fs_Progress_Report fs_scan_get_progress_report(void *id);
 
-// Common interface
-const char *fs_file_type_get_ext(Fs_File_Type type);
-const char *fs_file_type_to_cstr(Fs_File_Type type);
-void fs_hexdump(void *items_, size_t items_count, size_t offset);
+bool fs_is_device_valid(Fs_Device *device);
+bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point);
+int64_t fs_read_device(Fs_Device *device, void *buf, size_t count);
+int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset);
+bool fs_set_device_offset(Fs_Device *device, size_t offset);
+bool fs_close_device(Fs_Device *device);
+
+typedef void *(Fs_Thread_Routine)(void *);
+
+bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data);
+bool fs_wait_thread(Fs_Thread *thread);
+
+bool fs_create_mutex(Fs_Mutex *mutex);
+void fs_lock_mutex(Fs_Mutex *mutex);
+void fs_unlock_mutex(Fs_Mutex *mutex);
+bool fs_free_mutex(Fs_Mutex *mutex);
+
+bool fs_get_volume_size(Fs_Device *device, size_t *volume_size);
+size_t fs_get_cpu_count(void);
 
 #endif // FS_H_

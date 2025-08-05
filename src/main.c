@@ -8,6 +8,8 @@
 #define RAYGUI_WINDOWBOX_STATUSBAR_HEIGHT 32
 
 #include "./fs.h"
+#include "./scan.h"
+
 #define NOB_IMPLEMENTATION
 #include "./nob.h"
 #define ARENA_IMPLEMENTATION
@@ -29,9 +31,9 @@ typedef struct {
     Texture texture;
 } Ui_Preview;
 
-void ui_load_preview(Ui_Preview *preview, Fs_File *file) {
+void ui_load_preview(Ui_Preview *preview, Scan_File *file) {
     switch (file->type) {
-    case FS_FILE_TYPE_PNG: {
+    case SCAN_FILE_TYPE_PNG: {
         preview->image = LoadImageFromMemory(".png", file->bytes.items, file->bytes.count);
         preview->texture = LoadTextureFromImage(preview->image);
         preview->kind = UI_PREVIEW_PNG;
@@ -77,7 +79,7 @@ void ui_text_list_add(struct ui_text_list *list, const char *text, const char *s
     nob_da_append(list, full_text);
 }
 
-void DrawProgressReport(Fs_Progress_Report report) {
+void DrawProgressReport(Scan_Progress_Report report) {
     int margin = 10;
     int bar_h = 30;
 
@@ -107,7 +109,7 @@ void DrawProgressReport(Fs_Progress_Report report) {
     }
 }
 
-void DrawFileInfo(Rectangle rect, Ui_Preview *preview, Fs_File *file) {
+void DrawFileInfo(Rectangle rect, Ui_Preview *preview, Scan_File *file) {
     int button_h = 60;
     int label_h = 70;
     int margin = 10;
@@ -141,7 +143,7 @@ void DrawFileInfo(Rectangle rect, Ui_Preview *preview, Fs_File *file) {
     };
 
     if (GuiButton(button_rect, "RECOVER FILE")) {
-        const char *file_ext = fs_file_type_get_ext(file->type);
+        const char *file_ext = scan_file_type_get_ext(file->type);
         SaveFileData(TextFormat("recovered.%s", file_ext), file->bytes.items, file->bytes.count);
     }
 }
@@ -153,7 +155,7 @@ int main(void) {
     Arena arena = {0};
     Arena recovered_files_arena = {0};
 
-    Fs_Files recovered_files = {0};
+    Scan_Files recovered_files = {0};
     Fs_Mount_Points mount_points = {0};
     if (!fs_get_mount_points(&arena, &mount_points)) {
         fprintf(stderr, "Error: could not get mount points\n");
@@ -179,7 +181,7 @@ int main(void) {
     int scroll_index = 0;
     int last_file_index = -1;
     int file_index = -1;
-    void *scan_id = NULL;
+    Scan scan = {0};
     bool edit_mode = false;
     int device_index = 0;
 
@@ -203,7 +205,7 @@ int main(void) {
         BeginDrawing();
         ClearBackground(GetColor(GuiGetStyle(DEFAULT, BACKGROUND_COLOR)));
 
-        if (scan_id != NULL) GuiDisable();
+        if (scan.data != NULL) GuiDisable();
 
         if (edit_mode) GuiLock();
         Rectangle file_list_rect = { 10, 60, 860, 650 };
@@ -224,8 +226,8 @@ int main(void) {
             arena_reset(&recovered_files_arena);
 
             Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
-            scan_id = fs_scan_mount_point(&recovered_files_arena, mount_point, &recovered_files);
-            if (scan_id == NULL) {
+            scan = scan_mount_point(&recovered_files_arena, mount_point, &recovered_files);
+            if (scan.data == NULL) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
             }
         }
@@ -239,7 +241,7 @@ int main(void) {
         file_info_rect.height -= RAYGUI_WINDOWBOX_STATUSBAR_HEIGHT;
 
         if (file_index >= 0 && (size_t) file_index < recovered_files.count) {
-            Fs_File *file = &recovered_files.items[file_index];
+            Scan_File *file = &recovered_files.items[file_index];
             DrawFileInfo(file_info_rect, &preview, file);
         } else {
             GuiSetStyle(LABEL, TEXT_ALIGNMENT, TEXT_ALIGN_MIDDLE);
@@ -250,19 +252,19 @@ int main(void) {
         if (last_file_index != file_index) {
             ui_unload_preview(&preview);
             if (file_index >= 0) {
-                Fs_File *file = &recovered_files.items[file_index];
+                Scan_File *file = &recovered_files.items[file_index];
                 ui_load_preview(&preview, file);
             }
         }
 
-        if (scan_id != NULL) {
-            Fs_Progress_Report report = fs_scan_get_progress_report(scan_id);
+        if (scan.data != NULL) {
+            Scan_Progress_Report report = scan_get_progress_report(scan);
             if (report.done) {
                 for (size_t i = 0; i < recovered_files.count; ++i) {
-                    Fs_File *file = &recovered_files.items[i];
-                    ui_text_list_add(&file_list, file->name, fs_file_type_to_cstr(file->type));
+                    Scan_File *file = &recovered_files.items[i];
+                    ui_text_list_add(&file_list, file->name, scan_file_type_to_cstr(file->type));
                 }
-                scan_id = NULL;
+                scan.data = NULL;
             }
             DrawProgressReport(report);
         }

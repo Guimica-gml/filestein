@@ -103,7 +103,7 @@ int main(int argc, char **argv) {
 
     cc_with_flags(&cmd);
     cc_output(&cmd, BUILD_DIR"/filestein");
-    cc_input(&cmd, "src/main.c", "src/fs_common.c", "src/fs_linux_ext4.c");
+    cc_input(&cmd, "src/main.c", "src/fs.c", "src/scan.c");
     cc_add_libs(&cmd);
     if (!nob_cmd_run_sync_and_reset(&cmd)) {
         nob_log(NOB_ERROR, "could not build filestein");

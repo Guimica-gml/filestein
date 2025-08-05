@@ -26,26 +26,7 @@
 #define EXT4_EOFBLOCKS_FL    0x00400000
 #define EXT4_RESERVED_FL     0x80000000
 
-#define S_IXOTH 0x0001  /* Others may execute */
-#define S_IWOTH 0x0002  /* Others may write */
-#define S_IROTH 0x0004  /* Others may read */
-#define S_IXGRP 0x0008  /* Group members may execute */
-#define S_IWGRP 0x0010  /* Group members may write */
-#define S_IRGRP 0x0020  /* Group members may read */
-#define S_IXUSR 0x0040  /* Owner may execute */
-#define S_IWUSR 0x0080  /* Owner may write */
-#define S_IRUSR 0x0100  /* Owner may read */
-#define S_ISVTX 0x0200  /* Sticky bit */
-#define S_ISGID 0x0400  /* Set GID */
-#define S_ISUID 0x0800  /* Set UID */
-/* These are mutually-exclusive file types: */
-#define S_IFIFO 0x1000  /* FIFO */
-#define S_IFCHR 0x2000  /* Character device */
-#define S_IFDIR 0x4000  /* Directory */
-#define S_IFBLK 0x6000  /* Block device */
 #define S_IFREG 0x8000  /* Regular file */
-#define S_IFLNK 0xA000  /* Symbolic link */
-#define S_IFSOCK 0xC000 /* Socket */
 
 struct ext4_super_block {
     uint32_t s_inodes_count;         /* Inodes count */
