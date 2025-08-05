@@ -8,7 +8,7 @@
 #include <errno.h>
 
 typedef struct {
-    off_t *items;
+    size_t *items;
     size_t count;
     size_t capacity;
 } File_Offs;
@@ -26,7 +26,7 @@ size_t hash_bytes(void *buf, size_t buf_size) {
     return hash;
 }
 
-void file_set_add(Arena *arena, File_Set *set, off_t file_offset) {
+void file_set_add(Arena *arena, File_Set *set, size_t file_offset) {
     size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
     File_Offs *file_offs = &set->bucket[index];
     // Usually we would need to check if the value is already there
@@ -34,7 +34,7 @@ void file_set_add(Arena *arena, File_Set *set, off_t file_offset) {
     arena_da_append(arena, file_offs, file_offset);
 }
 
-bool file_set_contains(File_Set *set, off_t file_offset) {
+bool file_set_contains(File_Set *set, size_t file_offset) {
     size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
     File_Offs *file_offs = &set->bucket[index];
     for (size_t i = 0; i < file_offs->count; ++i) {

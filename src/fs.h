@@ -14,7 +14,10 @@
 #include "./arena.h"
 
 #ifdef _WIN32
+#include "./smh_windows.h"
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winioctl.h>
 typedef HANDLE Fs_Device;
 typedef HANDLE Fs_Mutex;
 typedef HANDLE Fs_Thread;
