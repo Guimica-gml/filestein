@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
+#include <threads.h>
 
 #include "./arena.h"
 
@@ -30,6 +31,12 @@ typedef int Fs_Device;
 typedef pthread_mutex_t Fs_Mutex;
 typedef pthread_t Fs_Thread;
 #endif
+
+#define min(a, b) (((a) < (b)) ? (a) : (b))
+#define max(a, b) (((a) > (b)) ? (a) : (b))
+
+#define FS_ERROR_BUF_CAP 2048
+extern thread_local char fs_error_buf[FS_ERROR_BUF_CAP];
 
 typedef enum {
     FS_MOUNT_POINT_EXT4,
@@ -65,11 +72,13 @@ bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data);
 bool fs_wait_thread(Fs_Thread *thread);
 
 bool fs_create_mutex(Fs_Mutex *mutex);
-void fs_lock_mutex(Fs_Mutex *mutex);
-void fs_unlock_mutex(Fs_Mutex *mutex);
+bool fs_lock_mutex(Fs_Mutex *mutex);
+bool fs_unlock_mutex(Fs_Mutex *mutex);
 bool fs_free_mutex(Fs_Mutex *mutex);
 
 bool fs_get_volume_size(Fs_Device *device, size_t *volume_size);
 size_t fs_get_cpu_count(void);
+
+const char *fs_get_last_error(void);
 
 #endif // FS_H_

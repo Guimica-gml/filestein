@@ -1,9 +1,6 @@
 #include "./fs.h"
 #include "./nob.h"
 
-#define min(a, b) (((a) < (b)) ? (a) : (b))
-#define max(a, b) (((a) > (b)) ? (a) : (b))
-
 bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
 #ifdef _WIN32
     char buffer[FS_PATH_CAP] = {0};
@@ -88,7 +85,7 @@ bool fs_is_device_valid(Fs_Device *device) {
 #ifdef _WIN32
     return *device != INVALID_HANDLE_VALUE;
 #else
-    return *device >= 0;
+    return *device == 0;
 #endif
 }
 
@@ -151,7 +148,7 @@ bool fs_close_device(Fs_Device *device) {
 #ifdef _WIN32
     return CloseHandle(*device);
 #else
-    return close(*device) >= 0;
+    return close(*device) == 0;
 #endif
 }
 
@@ -160,7 +157,8 @@ bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data) {
     *thread = CreateThread(NULL, 0, (void*)routine, data, 0, NULL);
     return *thread != NULL;
 #else
-    return pthread_create(thread, NULL, routine, data) >= 0;
+    errno = pthread_create(thread, NULL, routine, data);
+    return errno == 0;
 #endif
 }
 
@@ -168,7 +166,8 @@ bool fs_wait_thread(Fs_Thread *thread) {
 #ifdef _WIN32
     return WaitForSingleObject(thread, INFINITE) != WAIT_FAILED;
 #else
-    return pthread_join(*thread, NULL) >= 0;
+    errno = pthread_join(*thread, NULL);
+    return errno == 0;
 #endif
 }
 
@@ -177,23 +176,26 @@ bool fs_create_mutex(Fs_Mutex *mutex) {
     *mutex = CreateMutex(NULL, false, NULL);
     return *mutex != NULL;
 #else
-    return pthread_mutex_init(mutex, NULL) >= 0;
+    errno = pthread_mutex_init(mutex, NULL);
+    return errno == 0;
 #endif
 }
 
-void fs_lock_mutex(Fs_Mutex *mutex) {
+bool fs_lock_mutex(Fs_Mutex *mutex) {
 #ifdef _WIN32
-    WaitForSingleObject(*mutex, INFINITE);
+    return WaitForSingleObject(*mutex, INFINITE) != WAIT_FAILED;
 #else
-    pthread_mutex_lock(mutex);
+    errno = pthread_mutex_lock(mutex);
+    return errno == 0;
 #endif
 }
 
-void fs_unlock_mutex(Fs_Mutex *mutex) {
+bool fs_unlock_mutex(Fs_Mutex *mutex) {
 #ifdef _WIN32
-    ReleaseMutex(*mutex);
+    return ReleaseMutex(*mutex);
 #else
-    pthread_mutex_unlock(mutex);
+    errno = pthread_mutex_unlock(mutex);
+    return errno == 0;
 #endif
 }
 
@@ -201,7 +203,8 @@ bool fs_free_mutex(Fs_Mutex *mutex) {
 #ifdef _WIN32
     return CloseHandle(*mutex);
 #else
-    return pthread_mutex_destroy(mutex) >= 0;
+    errno = pthread_mutex_destroy(mutex);
+    return errno == 0;
 #endif
 }
 
@@ -215,7 +218,7 @@ bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
     /* *volume_size = */ disk_length_info.Length.QuadPart;
     return true;
 #else
-    return ioctl(*device, BLKGETSIZE64, volume_size) >= 0;
+    return ioctl(*device, BLKGETSIZE64, volume_size) == 0;
 #endif
 }
 
@@ -226,5 +229,22 @@ size_t fs_get_cpu_count(void) {
 #else
     long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     return max(1, cpu_count);
+#endif
+}
+
+thread_local char fs_error_buf[FS_ERROR_BUF_CAP] = {0};
+
+const char *fs_get_last_error(void) {
+#ifdef _WIN32
+    DWORD error_code = GetLastError();
+    FormatMessage(
+        FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+        fs_error_buf, FS_ERROR_BUF_CAP, NULL
+    );
+    return fs_error_buf;
+#else
+    strncpy(fs_error_buf, strerror(errno), FS_ERROR_BUF_CAP);
+    return fs_error_buf;
 #endif
 }

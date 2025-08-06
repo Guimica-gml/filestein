@@ -231,7 +231,7 @@ int main(void) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
             }
         }
-        GuiEnable();
+        if (scan.data == NULL) GuiEnable();
 
         Rectangle file_info_panel = { 880, 60, 390, 650 };
         GuiPanel(file_info_panel, "FILE INFO");
@@ -248,6 +248,7 @@ int main(void) {
             GuiLabel(file_info_rect, "SELECT A FILE TO\nSEE ITS INFORMATION");
             GuiSetStyle(LABEL, TEXT_ALIGNMENT, TEXT_ALIGN_LEFT);
         }
+        GuiEnable();
 
         if (last_file_index != file_index) {
             ui_unload_preview(&preview);

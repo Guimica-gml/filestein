@@ -117,8 +117,133 @@ void *start_scan_inode_thread(void *arg) {
     return NULL;
 }
 
+typedef bool(*Try_Parse_File_Func)(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Files *files);
+
+typedef struct {
+    Nob_String_View magic;
+    Try_Parse_File_Func try_parse_file;
+} File_Header_Entry;
+
+uint32_t read_uint32_be(Fs_Device *device) {
+    uint8_t bytes[4];
+    fs_read_device(device, &bytes[3], sizeof(uint8_t));
+    fs_read_device(device, &bytes[2], sizeof(uint8_t));
+    fs_read_device(device, &bytes[1], sizeof(uint8_t));
+    fs_read_device(device, &bytes[0], sizeof(uint8_t));
+    return *(uint32_t*)bytes;
+}
+
+// These values exist in case part of the file is valid, but the rest is corrupted
+// If the parsing goes for too long it will be interrupted (these numbers are arbitrary)
+#define PNG_PARSE_MAX_FILE_SIZE (4096 * 1024 * 10)
+#define PNG_PARSE_MAX_CHUNK_SIZE (4096 * 10)
+
+bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Files *files) {
+    Scan_File file = {0};
+    file.type = SCAN_FILE_TYPE_PNG;
+
+    const char *name_fmt = "0x%016lX";
+    int name_size = snprintf(NULL, 0, name_fmt, file_offset);
+
+    file.name = arena_alloc(arena, name_size + 1);
+    snprintf(file.name, name_size, name_fmt, file_offset);
+    file.name[name_size] = '\0';
+
+    if (!fs_set_device_offset(device, file_offset)) {
+        return false;
+    }
+
+    char *expected_magic = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
+    uint8_t end_chunk[4] = { 'I', 'E', 'N', 'D' };
+
+    unsigned char file_magic[8];
+    int64_t bytes_read = fs_read_device(device, file_magic, sizeof(file_magic));
+    if (bytes_read != sizeof(file_magic)) return false;
+    if (memcmp(file_magic, expected_magic, sizeof(file_magic)) != 0) return false;
+    arena_da_append_many(arena, &file.bytes, file_magic, sizeof(file_magic));
+
+    while (true) {
+        // TODO(nic): we should deallocate the memory used if parsing fails
+        // Maybe not deallocate, but Arena has functions that allow us to reuse the memory
+        if (file.bytes.count >= PNG_PARSE_MAX_FILE_SIZE) {
+            return false;
+        }
+
+        uint32_t length = read_uint32_be(device);
+        uint8_t chunk_type[4];
+        bytes_read = fs_read_device(device, chunk_type, sizeof(chunk_type));
+        if ((uint32_t) bytes_read != sizeof(chunk_type)) return false;
+        if (length >= PNG_PARSE_MAX_CHUNK_SIZE) return false;
+
+        uint8_t *a = (uint8_t*) &length;
+        arena_da_append_many(arena, &file.bytes, &a[3], sizeof(uint8_t));
+        arena_da_append_many(arena, &file.bytes, &a[2], sizeof(uint8_t));
+        arena_da_append_many(arena, &file.bytes, &a[1], sizeof(uint8_t));
+        arena_da_append_many(arena, &file.bytes, &a[0], sizeof(uint8_t));
+        arena_da_append_many(arena, &file.bytes, chunk_type, sizeof(chunk_type));
+
+        unsigned char chunk_data[length];
+        int64_t bytes_read = fs_read_device(device, chunk_data, length);
+        if ((uint32_t) bytes_read != length) return false;
+        arena_da_append_many(arena, &file.bytes, chunk_data, sizeof(chunk_data));
+
+        unsigned char crc[4];
+        bytes_read = fs_read_device(device, crc, sizeof(crc));
+        if ((uint32_t) bytes_read != sizeof(crc)) return false;
+        arena_da_append_many(arena, &file.bytes, crc, sizeof(crc));
+
+        if (memcmp(&chunk_type, end_chunk, sizeof(chunk_type)) == 0) {
+            break;
+        }
+    }
+
+    arena_da_append(arena, files, file);
+    return true;
+}
+
+static_assert(SCAN_FILE_TYPE_COUNT == 2, "Amount of file types changed, please update code here!");
+static File_Header_Entry file_header_entries[] = {
+    [SCAN_FILE_TYPE_UNKNOWN] = { .magic = SV(""),                                 .try_parse_file = NULL },
+    [SCAN_FILE_TYPE_PNG]     = { .magic = SV("\x89\x50\x4E\x47\x0D\x0A\x1A\x0A"), .try_parse_file = try_parse_png },
+};
+
 void *start_scan_chunk_thread(void *arg) {
-    (void) arg;
+    Scan_Chunk_Thread_Info *info = (void*)arg;
+
+    size_t max_magic_size = 0;
+    for (size_t i = 0; i < NOB_ARRAY_LEN(file_header_entries); ++i) {
+        max_magic_size = max(max_magic_size, file_header_entries[i].magic.count);
+    }
+
+    for (size_t i = 0; i < info->blocks_count; ++i) {
+        fs_lock_mutex(info->progress_report_mutex);
+        info->progress_bar->value += 1;
+        fs_unlock_mutex(info->progress_report_mutex);
+
+        size_t block_offset = info->chunk_offset + (info->block_size * i);
+        if (file_set_contains(info->file_set, block_offset)) {
+            continue;
+        }
+
+        char magic[max_magic_size];
+        int64_t bytes_read = fs_read_device_off(info->device, magic, max_magic_size, block_offset);
+        if (bytes_read < 0) {
+            fprintf(stderr, "Error: could not read %zu block: %s\n", block_offset / info->block_size, fs_get_last_error());
+            continue;
+        }
+
+        for (size_t j = 1; j < SCAN_FILE_TYPE_COUNT; ++j) {
+            File_Header_Entry header_entry = file_header_entries[j];
+            if (bytes_read < (int64_t) header_entry.magic.count || memcmp(magic, header_entry.magic.data, header_entry.magic.count) != 0) {
+                continue;
+            }
+
+            fs_lock_mutex(info->chunk_scan_mutex);
+            bool success = header_entry.try_parse_file(info->arena, info->device, block_offset, info->files);
+            fs_unlock_mutex(info->chunk_scan_mutex);
+            if (success) break;
+        }
+    }
     return NULL;
 }
 
@@ -130,7 +255,7 @@ void *start_scan_device_thread(void *arg) {
 
     Fs_Device device;
     if (!fs_open_device(&device, info->mount_point)) {
-        fprintf(stderr, "Error: could not open file `%s`: %s\n", info->mount_point->device_path, strerror(errno));
+        fprintf(stderr, "Error: could not open file `%s`: %s\n", info->mount_point->device_path, fs_get_last_error());
         nob_return_defer(1);
     }
 
@@ -155,7 +280,7 @@ void *start_scan_device_thread(void *arg) {
 
     size_t partition_size;
     if (!fs_get_volume_size(&device, &partition_size)) {
-        fprintf(stderr, "Error: coould not get partition size: %s\n", strerror(errno));
+        fprintf(stderr, "Error: coould not get partition size: %s\n", fs_get_last_error());
         nob_return_defer(1);
     }
 
@@ -206,7 +331,7 @@ void *start_scan_device_thread(void *arg) {
             }
 
             if (!fs_spawn_thread(&threads[i], start_scan_inode_thread, &thread_infos[i])) {
-                fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
+                fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
                 nob_return_defer(1);
             }
         }
@@ -249,7 +374,7 @@ void *start_scan_device_thread(void *arg) {
             }
 
             if (!fs_spawn_thread(&threads[i], start_scan_chunk_thread, &thread_infos[i])) {
-                fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
+                fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
                 nob_return_defer(1);
             }
         }
@@ -287,7 +412,7 @@ Scan scan_ext4_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Scan_Files
 
     Fs_Thread thread;
     if (!fs_spawn_thread(&thread, start_scan_device_thread, info)) {
-        fprintf(stderr, "Error: could not create thread: %s\n", strerror(errno));
+        fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
         return (Scan) {0};
     }
 
