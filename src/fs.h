@@ -24,6 +24,7 @@ typedef HANDLE Fs_Mutex;
 typedef HANDLE Fs_Thread;
 typedef DWORD Fs_Thread_Result;
 #define FS_THREAD_RESULT_OK 0
+#define FS_DEVICE_INVALID INVALID_HANDLE_VALUE
 #else
 #include <unistd.h>
 #include <linux/fs.h>
@@ -34,6 +35,7 @@ typedef pthread_mutex_t Fs_Mutex;
 typedef pthread_t Fs_Thread;
 typedef void *Fs_Thread_Result;
 #define FS_THREAD_RESULT_OK NULL
+#define FS_DEVICE_INVALID -1
 #endif
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))

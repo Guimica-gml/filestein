@@ -105,7 +105,8 @@ Fs_Thread_Result start_scan_inode_thread(void *arg) {
 
     for (size_t i = 0; i < info->block_groups_count; ++i) {
         struct ext4_group_desc group_desc = info->group_descs[info->block_groups_index + i];
-        size_t inode_table_index = (size_t) group_desc.bg_inode_table_lo | ((size_t) group_desc.bg_inode_table_hi << 32);
+        size_t inode_table_index =
+            (size_t) group_desc.bg_inode_table_lo | ((size_t) group_desc.bg_inode_table_hi << 32);
         size_t inode_table_offset = inode_table_index * info->block_size;
 
         for (size_t j = 0; j < info->inodes_per_group; ++j) {
@@ -227,7 +228,10 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
     for (size_t i = 0; i < NOB_ARRAY_LEN(file_header_entries); ++i) {
         max_magic_size = max(max_magic_size, file_header_entries[i].magic.count);
     }
+
+    fs_lock_mutex(info->chunk_scan_mutex);
     char *magic = arena_alloc(info->arena, max_magic_size);
+    fs_unlock_mutex(info->chunk_scan_mutex);
 
     for (size_t i = 0; i < info->blocks_count; ++i) {
         fs_lock_mutex(info->progress_report_mutex);
@@ -241,13 +245,18 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
 
         int64_t bytes_read = fs_read_device_off(&device, magic, max_magic_size, block_offset);
         if (bytes_read < 0) {
-            fprintf(stderr, "Error: could not read %zu block: %s\n", block_offset / info->block_size, fs_get_last_error());
+            fprintf(
+                stderr, "Error: could not read %zu block: %s\n",
+                block_offset / info->block_size, fs_get_last_error()
+            );
             continue;
         }
 
         for (size_t j = 1; j < SCAN_FILE_TYPE_COUNT; ++j) {
             File_Header_Entry header_entry = file_header_entries[j];
-            if (bytes_read < (int64_t) header_entry.magic.count || memcmp(magic, header_entry.magic.data, header_entry.magic.count) != 0) {
+            if (bytes_read < (int64_t) header_entry.magic.count
+                || memcmp(magic, header_entry.magic.data, header_entry.magic.count) != 0)
+            {
                 continue;
             }
 
@@ -266,7 +275,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
     Scan_Device_Thread_Info *info = arg;
     Arena scratch = {0};
 
-    Fs_Device device;
+    Fs_Device device = FS_DEVICE_INVALID;
     if (!fs_open_device(&device, info->mount_point)) {
         fprintf(stderr, "Error: could not open file `%s`: %s\n", info->mount_point->device_path, fs_get_last_error());
         goto cleanup;
@@ -291,15 +300,15 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
         goto cleanup;
     }
 
-    size_t partition_size;
-    if (!fs_get_volume_size(&device, &partition_size)) {
+    size_t volume_size;
+    if (!fs_get_volume_size(&device, &volume_size)) {
         fprintf(stderr, "Error: coould not get partition size: %s\n", fs_get_last_error());
         goto cleanup;
     }
 
     size_t block_size = 1024 << super_block.s_log_block_size;
     size_t block_group_size = super_block.s_blocks_per_group * block_size;
-    size_t block_group_count = partition_size / block_group_size;
+    size_t block_group_count = volume_size / block_group_size;
 
     size_t group_descs_size = block_group_count * sizeof(struct ext4_group_desc);
     struct ext4_group_desc *group_descs = arena_alloc(&scratch, group_descs_size);
@@ -355,7 +364,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
     }
 
     {
-        size_t total_block_count = partition_size / block_size;
+        size_t total_block_count = volume_size / block_size;
         size_t blocks_per_chunk = total_block_count / cpu_count;
         size_t rest = total_block_count % cpu_count;
 

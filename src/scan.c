@@ -73,8 +73,8 @@ void scan_free(Scan scan) {
         return;
     }
     switch (scan.type) {
-    case FS_MOUNT_POINT_EXT4: scan_ext4_free(scan.data);
-    case FS_MOUNT_POINT_NTFS: scan_ntfs_free(scan.data);
+    case FS_MOUNT_POINT_EXT4: scan_ext4_free(scan.data); break;
+    case FS_MOUNT_POINT_NTFS: scan_ntfs_free(scan.data); break;
     default:
         assert(0 && "unreachable");
         exit(1); // dead code, so cl.exe shuts up

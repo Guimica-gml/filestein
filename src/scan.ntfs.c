@@ -1,9 +1,9 @@
 #include "./ntfs.h"
 
 Scan scan_ntfs_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Scan_Files *files) {
-    //(void) arena;
+    (void) arena;
     //(void) mount_point;
-    //(void) files;
+    (void) files;
 
     Fs_Device device;
     bool success = fs_open_device(&device, mount_point);

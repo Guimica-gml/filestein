@@ -232,7 +232,11 @@ bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
 #ifdef _WIN32
     GET_LENGTH_INFORMATION disk_length_info;
     DWORD bytes_returned;
-    if (!DeviceIoControl(*device, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &disk_length_info, sizeof(GET_LENGTH_INFORMATION), &bytes_returned, NULL)) {
+    if (!DeviceIoControl(
+            *device, IOCTL_DISK_GET_LENGTH_INFO,
+            NULL, 0, &disk_length_info,
+            sizeof(GET_LENGTH_INFORMATION), &bytes_returned, NULL))
+    {
         return false;
     }
     *volume_size = disk_length_info.Length.QuadPart;
