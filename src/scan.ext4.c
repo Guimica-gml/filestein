@@ -14,7 +14,7 @@ typedef struct {
 
 typedef struct {
     Arena *arena;
-    Fs_Device *device;
+    Fs_Mount_Point *mount_point;
 
     size_t inode_size;
     size_t block_size;
@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     Arena *arena;
-    Fs_Device *device;
+    Fs_Mount_Point *mount_point;
 
     size_t block_size;
     size_t chunk_offset;
@@ -96,17 +96,21 @@ void scan_inode(Arena *arena, Fs_Device *device, size_t inode_offset, size_t blo
     }
 }
 
-void *start_scan_inode_thread(void *arg) {
+Fs_Thread_Result start_scan_inode_thread(void *arg) {
     Scan_Inode_Thread_Info *info = arg;
+
+    Fs_Device device;
+    bool success = fs_open_device(&device, info->mount_point);
+    assert(success);
 
     for (size_t i = 0; i < info->block_groups_count; ++i) {
         struct ext4_group_desc group_desc = info->group_descs[info->block_groups_index + i];
-        size_t inode_table_index = group_desc.bg_inode_table_lo | ((size_t) group_desc.bg_inode_table_hi << 32);
+        size_t inode_table_index = (size_t) group_desc.bg_inode_table_lo | ((size_t) group_desc.bg_inode_table_hi << 32);
         size_t inode_table_offset = inode_table_index * info->block_size;
 
         for (size_t j = 0; j < info->inodes_per_group; ++j) {
             size_t inode_offset = inode_table_offset + (info->inode_size * j);
-            scan_inode(info->arena, info->device, inode_offset, info->block_size, info->file_set, info->inode_scan_mutex);
+            scan_inode(info->arena, &device, inode_offset, info->block_size, info->file_set, info->inode_scan_mutex);
         }
 
         fs_lock_mutex(info->progress_report_mutex);
@@ -114,7 +118,8 @@ void *start_scan_inode_thread(void *arg) {
         fs_unlock_mutex(info->progress_report_mutex);
     }
 
-    return NULL;
+    fs_close_device(&device);
+    return FS_THREAD_RESULT_OK;
 }
 
 typedef bool(*Try_Parse_File_Func)(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Files *files);
@@ -182,10 +187,14 @@ bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Fil
         arena_da_append_many(arena, &file.bytes, &a[0], sizeof(uint8_t));
         arena_da_append_many(arena, &file.bytes, chunk_type, sizeof(chunk_type));
 
-        unsigned char chunk_data[length];
+        unsigned char *chunk_data = malloc(length);
         int64_t bytes_read = fs_read_device(device, chunk_data, length);
-        if ((uint32_t) bytes_read != length) return false;
-        arena_da_append_many(arena, &file.bytes, chunk_data, sizeof(chunk_data));
+        if ((uint32_t) bytes_read != length) {
+            free(chunk_data);
+            return false;
+        }
+        arena_da_append_many(arena, &file.bytes, chunk_data, length);
+        free(chunk_data);
 
         unsigned char crc[4];
         bytes_read = fs_read_device(device, crc, sizeof(crc));
@@ -207,13 +216,18 @@ static File_Header_Entry file_header_entries[] = {
     [SCAN_FILE_TYPE_PNG]     = { .magic = SV("\x89\x50\x4E\x47\x0D\x0A\x1A\x0A"), .try_parse_file = try_parse_png },
 };
 
-void *start_scan_chunk_thread(void *arg) {
+Fs_Thread_Result start_scan_chunk_thread(void *arg) {
     Scan_Chunk_Thread_Info *info = (void*)arg;
+
+    Fs_Device device;
+    bool success = fs_open_device(&device, info->mount_point);
+    assert(success);
 
     size_t max_magic_size = 0;
     for (size_t i = 0; i < NOB_ARRAY_LEN(file_header_entries); ++i) {
         max_magic_size = max(max_magic_size, file_header_entries[i].magic.count);
     }
+    char *magic = arena_alloc(info->arena, max_magic_size);
 
     for (size_t i = 0; i < info->blocks_count; ++i) {
         fs_lock_mutex(info->progress_report_mutex);
@@ -225,8 +239,7 @@ void *start_scan_chunk_thread(void *arg) {
             continue;
         }
 
-        char magic[max_magic_size];
-        int64_t bytes_read = fs_read_device_off(info->device, magic, max_magic_size, block_offset);
+        int64_t bytes_read = fs_read_device_off(&device, magic, max_magic_size, block_offset);
         if (bytes_read < 0) {
             fprintf(stderr, "Error: could not read %zu block: %s\n", block_offset / info->block_size, fs_get_last_error());
             continue;
@@ -239,24 +252,24 @@ void *start_scan_chunk_thread(void *arg) {
             }
 
             fs_lock_mutex(info->chunk_scan_mutex);
-            bool success = header_entry.try_parse_file(info->arena, info->device, block_offset, info->files);
+            bool success = header_entry.try_parse_file(info->arena, &device, block_offset, info->files);
             fs_unlock_mutex(info->chunk_scan_mutex);
             if (success) break;
         }
     }
-    return NULL;
+
+    fs_close_device(&device);
+    return FS_THREAD_RESULT_OK;
 }
 
-void *start_scan_device_thread(void *arg) {
+Fs_Thread_Result start_scan_device_thread(void *arg) {
     Scan_Device_Thread_Info *info = arg;
-
-    int result = 0;
     Arena scratch = {0};
 
     Fs_Device device;
     if (!fs_open_device(&device, info->mount_point)) {
         fprintf(stderr, "Error: could not open file `%s`: %s\n", info->mount_point->device_path, fs_get_last_error());
-        nob_return_defer(1);
+        goto cleanup;
     }
 
     struct ext4_super_block super_block;
@@ -265,7 +278,7 @@ void *start_scan_device_thread(void *arg) {
 
     if (super_block.s_magic != 0xEF53) {
         fprintf(stderr, "Error: mount point is not formatted as ext4\n");
-        nob_return_defer(1);
+        goto cleanup;
     }
 
     size_t inode_size;
@@ -275,13 +288,13 @@ void *start_scan_device_thread(void *arg) {
         inode_size = 256;
     } else {
         fprintf(stderr, "Error: ext4 revision set to weird value\n");
-        nob_return_defer(1);
+        goto cleanup;
     }
 
     size_t partition_size;
     if (!fs_get_volume_size(&device, &partition_size)) {
         fprintf(stderr, "Error: coould not get partition size: %s\n", fs_get_last_error());
-        nob_return_defer(1);
+        goto cleanup;
     }
 
     size_t block_size = 1024 << super_block.s_log_block_size;
@@ -314,7 +327,7 @@ void *start_scan_device_thread(void *arg) {
         for (size_t i = 0; i < cpu_count; ++i) {
             thread_infos[i] = (Scan_Inode_Thread_Info) {
                 .arena = &scratch,
-                .device = &device,
+                .mount_point = info->mount_point,
                 .inode_size = inode_size,
                 .block_size = block_size,
                 .block_groups_index = block_groups_per_cpu * i,
@@ -332,7 +345,7 @@ void *start_scan_device_thread(void *arg) {
 
             if (!fs_spawn_thread(&threads[i], start_scan_inode_thread, &thread_infos[i])) {
                 fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
-                nob_return_defer(1);
+                goto cleanup;
             }
         }
 
@@ -359,7 +372,7 @@ void *start_scan_device_thread(void *arg) {
         for (size_t i = 0; i < cpu_count; ++i) {
             thread_infos[i] = (Scan_Chunk_Thread_Info) {
                 .arena = info->arena,
-                .device = &device,
+                .mount_point = info->mount_point,
                 .block_size = block_size,
                 .chunk_offset = i * blocks_per_chunk,
                 .blocks_count = blocks_per_chunk,
@@ -375,7 +388,7 @@ void *start_scan_device_thread(void *arg) {
 
             if (!fs_spawn_thread(&threads[i], start_scan_chunk_thread, &thread_infos[i])) {
                 fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
-                nob_return_defer(1);
+                goto cleanup;
             }
         }
 
@@ -384,14 +397,14 @@ void *start_scan_device_thread(void *arg) {
         }
     }
 
-defer:
+cleanup:
     fs_lock_mutex(&info->progress_report_mutex);
     info->progress_report.done = true;
     fs_unlock_mutex(&info->progress_report_mutex);
 
     arena_free(&scratch);
     if (fs_is_device_valid(&device)) fs_close_device(&device);
-    return (void*)(uintptr_t)result;
+    return FS_THREAD_RESULT_OK;
 }
 
 Scan scan_ext4_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Scan_Files *files) {
@@ -426,4 +439,11 @@ Scan_Progress_Report scan_ext4_get_progress_report(void *info) {
     Scan_Progress_Report report = casted_info->progress_report;
     fs_unlock_mutex(&casted_info->progress_report_mutex);
     return report;
+}
+
+void scan_ext4_free(void *info) {
+    Scan_Device_Thread_Info *casted_info = info;
+    fs_free_mutex(&casted_info->inode_scan_mutex);
+    fs_free_mutex(&casted_info->chunk_scan_mutex);
+    fs_free_mutex(&casted_info->progress_report_mutex);
 }

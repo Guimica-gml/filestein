@@ -68,6 +68,19 @@ Scan_Progress_Report scan_get_progress_report(Scan scan) {
     }
 }
 
+void scan_free(Scan scan) {
+    if (scan.data == NULL) {
+        return;
+    }
+    switch (scan.type) {
+    case FS_MOUNT_POINT_EXT4: scan_ext4_free(scan.data);
+    case FS_MOUNT_POINT_NTFS: scan_ntfs_free(scan.data);
+    default:
+        assert(0 && "unreachable");
+        exit(1); // dead code, so cl.exe shuts up
+    }
+}
+
 const char *scan_file_type_get_ext(Scan_File_Type type) {
     switch (type) {
     case SCAN_FILE_TYPE_UNKNOWN: return "bin";

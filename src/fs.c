@@ -97,7 +97,7 @@ bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL,
         OPEN_EXISTING,
-        FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
+        0,
         NULL
     );
     return *device != INVALID_HANDLE_VALUE;
@@ -109,11 +109,11 @@ bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
 
 int64_t fs_read_device(Fs_Device *device, void *buf, size_t count) {
 #ifdef _WIN32
-    DWORD rd;
-    if (!ReadFile(*device, buf, count, &rd, NULL)) {
+    DWORD bytes_read;
+    if (!ReadFile(*device, buf, count, &bytes_read, NULL)) {
         return -1;
     }
-    return (int64_t)rd;
+    return (int64_t)bytes_read;
 #else
     return read(*device, buf, count);
 #endif
@@ -121,16 +121,36 @@ int64_t fs_read_device(Fs_Device *device, void *buf, size_t count) {
 
 int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset) {
 #ifdef _WIN32
-    LARGE_INTEGER l;
-    l.QuadPart = (LONG64)offset;
+#define PAGE_SIZE 512
+    size_t first_page = offset / PAGE_SIZE;
+    size_t last_page = ((offset + count) / PAGE_SIZE) + 1;
+    size_t page_count = last_page - first_page;
+
+    unsigned char *temp = malloc(page_count * PAGE_SIZE);
+    assert(temp != NULL);
+
+    size_t page_offset = first_page * PAGE_SIZE;
     OVERLAPPED overlapped = {0};
-    overlapped.Offset = l.LowPart;
-    overlapped.OffsetHigh = l.HighPart;
-    DWORD rd;
-    if (!ReadFile(*device, buf, count, &rd, &overlapped)) {
-        return -1;
+    overlapped.Offset = (DWORD)(page_offset & 0x00000000FFFFFFFF);
+    overlapped.OffsetHigh = (DWORD)(page_offset >> 32);
+
+    DWORD bytes_read;
+    if (!ReadFile(*device, temp, page_count * PAGE_SIZE, &bytes_read, &overlapped)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_HANDLE_EOF) {
+            free(temp);
+            return -1;
+        }
+        SetLastError(0);
     }
-    return (int64_t)rd;
+
+    size_t local_offset = offset - (first_page * PAGE_SIZE);
+    size_t actual_bytes_count = min(count, bytes_read - local_offset);
+    memcpy(buf, &temp[local_offset], actual_bytes_count);
+
+    free(temp);
+    return (int64_t)actual_bytes_count;
+#undef PAGE_SIZE
 #else
     return pread(*device, buf, count, offset);
 #endif
@@ -154,7 +174,7 @@ bool fs_close_device(Fs_Device *device) {
 
 bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data) {
 #ifdef _WIN32
-    *thread = CreateThread(NULL, 0, (void*)routine, data, 0, NULL);
+    *thread = CreateThread(NULL, 0, routine, data, 0, NULL);
     return *thread != NULL;
 #else
     errno = pthread_create(thread, NULL, routine, data);
@@ -164,7 +184,7 @@ bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data) {
 
 bool fs_wait_thread(Fs_Thread *thread) {
 #ifdef _WIN32
-    return WaitForSingleObject(thread, INFINITE) != WAIT_FAILED;
+    return WaitForSingleObject(*thread, INFINITE) != WAIT_FAILED;
 #else
     errno = pthread_join(*thread, NULL);
     return errno == 0;
@@ -215,7 +235,7 @@ bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
     if (!DeviceIoControl(*device, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &disk_length_info, sizeof(GET_LENGTH_INFORMATION), &bytes_returned, NULL)) {
         return false;
     }
-    /* *volume_size = */ disk_length_info.Length.QuadPart;
+    *volume_size = disk_length_info.Length.QuadPart;
     return true;
 #else
     return ioctl(*device, BLKGETSIZE64, volume_size) == 0;

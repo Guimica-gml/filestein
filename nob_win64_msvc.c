@@ -11,6 +11,7 @@
 #define cc_with_flags(cmd)                      \
     cmd_append((cmd),                           \
                "cl.exe",                        \
+               "/Z7",                           \
                "/std:c11",                      \
                "/I", RAYLIB_SRC_DIR)            \
 
@@ -26,6 +27,7 @@
 #define cc_with_raylib_flags(cmd)                               \
     cmd_append((cmd),                                           \
                "cl.exe",                                        \
+               "/Z7",                                           \
                "/DPLATFORM_DESKTOP",                            \
                "/I", RAYLIB_SRC_DIR"\\external\\glfw\\include") \
 

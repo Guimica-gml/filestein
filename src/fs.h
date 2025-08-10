@@ -22,6 +22,8 @@
 typedef HANDLE Fs_Device;
 typedef HANDLE Fs_Mutex;
 typedef HANDLE Fs_Thread;
+typedef DWORD Fs_Thread_Result;
+#define FS_THREAD_RESULT_OK 0
 #else
 #include <unistd.h>
 #include <linux/fs.h>
@@ -30,6 +32,8 @@ typedef HANDLE Fs_Thread;
 typedef int Fs_Device;
 typedef pthread_mutex_t Fs_Mutex;
 typedef pthread_t Fs_Thread;
+typedef void *Fs_Thread_Result;
+#define FS_THREAD_RESULT_OK NULL
 #endif
 
 #define min(a, b) (((a) < (b)) ? (a) : (b))
@@ -66,7 +70,7 @@ int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t of
 bool fs_set_device_offset(Fs_Device *device, size_t offset);
 bool fs_close_device(Fs_Device *device);
 
-typedef void *(Fs_Thread_Routine)(void *);
+typedef Fs_Thread_Result (Fs_Thread_Routine)(void *);
 
 bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data);
 bool fs_wait_thread(Fs_Thread *thread);

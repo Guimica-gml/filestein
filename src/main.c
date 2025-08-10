@@ -224,6 +224,7 @@ int main(void) {
             file_index = -1;
             recovered_files.count = 0;
             arena_reset(&recovered_files_arena);
+            scan_free(scan);
 
             Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
             scan = scan_mount_point(&recovered_files_arena, mount_point, &recovered_files);
