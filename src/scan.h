@@ -48,8 +48,9 @@ typedef struct {
     void *data;
 } Scan;
 
-Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Scan_Files *files);
+Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point);
 Scan_Progress_Report scan_get_progress_report(Scan scan);
+void scan_collect_files(Scan scan, Arena *arena, Scan_Files *files);
 void scan_free(Scan scan);
 
 const char *scan_file_type_get_ext(Scan_File_Type type);

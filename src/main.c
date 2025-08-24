@@ -1,10 +1,3 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <errno.h>
-#include <assert.h>
-#include <raylib.h>
-
 #define RAYGUI_WINDOWBOX_STATUSBAR_HEIGHT 32
 
 #include "./fs.h"
@@ -16,6 +9,13 @@
 #include "./arena.h"
 #define RAYGUI_IMPLEMENTATION
 #include "./raygui.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <errno.h>
+#include <assert.h>
+#include <raylib.h>
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -58,20 +58,20 @@ void ui_unload_preview(Ui_Preview *preview) {
     }
 }
 
-struct ui_text_list {
+typedef struct {
     char **items;
     size_t count;
     size_t capacity;
-};
+} Ui_Text_List;
 
-void ui_text_list_reset(struct ui_text_list *list) {
+void ui_text_list_reset(Ui_Text_List *list) {
     for (size_t i = 0; i < list->count; ++i) {
         free(list->items[i]);
     }
     list->count = 0;
 }
 
-void ui_text_list_add(struct ui_text_list *list, const char *text, const char *subtext) {
+void ui_text_list_add(Ui_Text_List *list, const char *text, const char *subtext) {
     size_t full_text_size = strlen(text) + strlen(subtext) + 4;
     char *full_text = malloc(full_text_size);
     snprintf(full_text, full_text_size, "%s (%s)", text, subtext);
@@ -177,7 +177,7 @@ int main(void) {
     nob_sb_append_null(&mount_list);
 
     Ui_Preview preview = {0};
-    struct ui_text_list file_list = {0};
+    Ui_Text_List file_list = {0};
     int scroll_index = 0;
     int last_file_index = -1;
     int file_index = -1;
@@ -222,12 +222,9 @@ int main(void) {
         if (GuiButton(scan_button_rect, "SCAN")) {
             ui_text_list_reset(&file_list);
             file_index = -1;
-            recovered_files.count = 0;
-            arena_reset(&recovered_files_arena);
-            scan_free(scan);
 
             Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
-            scan = scan_mount_point(&recovered_files_arena, mount_point, &recovered_files);
+            scan = scan_mount_point(&arena, mount_point);
             if (scan.data == NULL) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
             }
@@ -262,10 +259,16 @@ int main(void) {
         if (scan.data != NULL) {
             Scan_Progress_Report report = scan_get_progress_report(scan);
             if (report.done) {
+                arena_reset(&recovered_files_arena);
+                memset(&recovered_files, 0, sizeof(recovered_files));
+
+                scan_collect_files(scan, &recovered_files_arena, &recovered_files);
                 for (size_t i = 0; i < recovered_files.count; ++i) {
                     Scan_File *file = &recovered_files.items[i];
                     ui_text_list_add(&file_list, file->name, scan_file_type_to_cstr(file->type));
                 }
+
+                scan_free(scan);
                 scan.data = NULL;
             }
             DrawProgressReport(report);

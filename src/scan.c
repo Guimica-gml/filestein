@@ -48,10 +48,10 @@ bool file_set_contains(File_Set *set, size_t file_offset) {
 #include "./scan.ntfs.c"
 #include "./scan.ext4.c"
 
-Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point, Scan_Files *files) {
+Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
     switch (mount_point->type) {
-    case FS_MOUNT_POINT_EXT4: return scan_ext4_mount_point(arena, mount_point, files);
-    case FS_MOUNT_POINT_NTFS: return scan_ntfs_mount_point(arena, mount_point, files);
+    case FS_MOUNT_POINT_EXT4: return scan_ext4_mount_point(arena, mount_point);
+    case FS_MOUNT_POINT_NTFS: return scan_ntfs_mount_point(arena, mount_point);
     default:
         assert(0 && "unreachable");
         exit(1); // dead code, so cl.exe shuts up
@@ -62,6 +62,16 @@ Scan_Progress_Report scan_get_progress_report(Scan scan) {
     switch (scan.type) {
     case FS_MOUNT_POINT_EXT4: return scan_ext4_get_progress_report(scan.data);
     case FS_MOUNT_POINT_NTFS: return scan_ntfs_get_progress_report(scan.data);
+    default:
+        assert(0 && "unreachable");
+        exit(1); // dead code, so cl.exe shuts up
+    }
+}
+
+void scan_collect_files(Scan scan, Arena *arena, Scan_Files *files) {
+    switch (scan.type) {
+    case FS_MOUNT_POINT_EXT4: scan_ext4_collect_files(scan.data, arena, files); break;
+    case FS_MOUNT_POINT_NTFS: scan_ntfs_collect_files(scan.data, arena, files); break;
     default:
         assert(0 && "unreachable");
         exit(1); // dead code, so cl.exe shuts up
