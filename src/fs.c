@@ -256,7 +256,7 @@ size_t fs_get_cpu_count(void) {
 #endif
 }
 
-thread_local char fs_error_buf[FS_ERROR_BUF_CAP] = {0};
+_Thread_local char fs_error_buf[FS_ERROR_BUF_CAP] = {0};
 
 const char *fs_get_last_error(void) {
 #ifdef _WIN32

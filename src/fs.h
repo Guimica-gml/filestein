@@ -10,7 +10,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <assert.h>
-#include <threads.h>
 
 #include "./arena.h"
 
@@ -42,7 +41,7 @@ typedef void *Fs_Thread_Result;
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 
 #define FS_ERROR_BUF_CAP 2048
-extern thread_local char fs_error_buf[FS_ERROR_BUF_CAP];
+extern _Thread_local char fs_error_buf[FS_ERROR_BUF_CAP];
 
 typedef enum {
     FS_MOUNT_POINT_EXT4,
