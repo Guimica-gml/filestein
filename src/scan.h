@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 
 #include "./fs.h"
 #include "./arena.h"
@@ -32,7 +33,7 @@ typedef struct {
 } Scan_Files;
 
 typedef struct {
-    size_t value;
+    atomic_int value;
     size_t max_value;
 } Scan_Progress_Bar;
 

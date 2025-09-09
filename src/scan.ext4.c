@@ -11,7 +11,6 @@ typedef struct {
     size_t inodes_per_group;
     Fs_Mount_Point *mount_point;
     struct ext4_group_desc *group_descs;
-    Fs_Mutex *progress_report_mutex;
     Scan_Progress_Bar *progress_bar;
 } Scan_Inode_Thread;
 
@@ -24,7 +23,6 @@ typedef struct {
     Scan_Files files;
     Fs_Mount_Point *mount_point;
     File_Set *file_set;
-    Fs_Mutex *progress_report_mutex;
     Scan_Progress_Bar *progress_bar;
 } Scan_Chunk_Thread;
 
@@ -32,7 +30,6 @@ typedef struct {
     Fs_Thread id;
     Arena arena;
     Fs_Mount_Point mount_point;
-    Fs_Mutex progress_report_mutex;
     Scan_Progress_Report progress_report;
     Scan_Inode_Thread *scan_inode_threads;
     Scan_Chunk_Thread *scan_chunk_threads;
@@ -105,9 +102,7 @@ Fs_Thread_Result start_scan_inode_thread(void *arg) {
             scan_inode(&info->arena, &device, inode_offset, info->block_size, &info->file_set);
         }
 
-        fs_lock_mutex(info->progress_report_mutex);
-        info->progress_bar->value += 1;
-        fs_unlock_mutex(info->progress_report_mutex);
+        atomic_fetch_add(&info->progress_bar->value, 1);
     }
 
     fs_close_device(&device);
@@ -221,9 +216,7 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
     char *magic = arena_alloc(&info->arena, max_magic_size);
 
     for (size_t i = 0; i < info->blocks_count; ++i) {
-        fs_lock_mutex(info->progress_report_mutex);
-        info->progress_bar->value += 1;
-        fs_unlock_mutex(info->progress_report_mutex);
+        atomic_fetch_add(&info->progress_bar->value, 1);
 
         size_t block_offset = info->chunk_offset + (info->block_size * i);
         if (file_set_contains(info->file_set, block_offset)) {
@@ -310,7 +303,6 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
             .group_descs = group_descs,
             .mount_point = &info->mount_point,
             .progress_bar = &info->progress_report.bars[0],
-            .progress_report_mutex = &info->progress_report_mutex,
         };
         if (i >= info->threads_count - 1) {
             info->scan_inode_threads[i].block_groups_count += rest;
@@ -347,7 +339,6 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
             .file_set = file_set,
             .mount_point = &info->mount_point,
             .progress_bar = &info->progress_report.bars[1],
-            .progress_report_mutex = &info->progress_report_mutex,
         };
         if (i >= info->threads_count - 1) {
             info->scan_chunk_threads[i].blocks_count += rest;
@@ -388,9 +379,7 @@ Scan scan_ext4_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
     scan_device->scan_inode_threads = scan_inode_threads;
     scan_device->scan_chunk_threads = scan_chunk_threads;
     scan_device->threads_count = threads_count;
-
     scan_device->progress_report.bars_count = 2;
-    fs_create_mutex(&scan_device->progress_report_mutex);
 
     if (!fs_spawn_thread(&scan_device->id, start_scan_device_thread, scan_device)) {
         fprintf(stderr, "Error: could not create thread: %s\n", fs_get_last_error());
@@ -403,10 +392,7 @@ Scan scan_ext4_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
 
 Scan_Progress_Report scan_ext4_get_progress_report(void *info) {
     Scan_Device_Thread *scan_device = info;
-    fs_lock_mutex(&scan_device->progress_report_mutex);
-    Scan_Progress_Report report = scan_device->progress_report;
-    fs_unlock_mutex(&scan_device->progress_report_mutex);
-    return report;
+    return scan_device->progress_report;
 }
 
 void scan_ext4_collect_files(void *info, Arena *arena, Scan_Files *files) {
@@ -432,6 +418,5 @@ void scan_ext4_collect_files(void *info, Arena *arena, Scan_Files *files) {
 
 void scan_ext4_free(void *info) {
     Scan_Device_Thread *scan_device = info;
-    fs_free_mutex(&scan_device->progress_report_mutex);
     arena_free(&scan_device->arena);
 }
