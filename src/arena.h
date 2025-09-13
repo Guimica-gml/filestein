@@ -95,10 +95,13 @@ void arena_trim(Arena *a);
     #define cast_ptr(...)
 #endif
 
-#define arena_da_append(a, da, item)                                                          \
+#define arena_da_reserve(a, da, expected_capacity)                                            \
     do {                                                                                      \
-        if ((da)->count >= (da)->capacity) {                                                  \
+        if ((expected_capacity) > (da)->capacity) {                                           \
             size_t new_capacity = (da)->capacity == 0 ? ARENA_DA_INIT_CAP : (da)->capacity*2; \
+            while ((expected_capacity) > new_capacity) {                                      \
+                new_capacity *= 2;                                                            \
+            }                                                                                 \
             (da)->items = cast_ptr((da)->items)arena_realloc(                                 \
                 (a), (da)->items,                                                             \
                 (da)->capacity*sizeof(*(da)->items),                                          \
@@ -106,22 +109,18 @@ void arena_trim(Arena *a);
             (da)->capacity = new_capacity;                                                    \
             assert((da)->items != NULL && "buy more RAM");                                    \
         }                                                                                     \
-        (da)->items[(da)->count++] = (item);                                                  \
+    } while (0)
+
+#define arena_da_append(a, da, item)                    \
+    do {                                                \
+        arena_da_reserve((a), (da), (da)->count + 1);   \
+        (da)->items[(da)->count++] = (item);            \
     } while (0)
 
 // Append several items to a dynamic array
 #define arena_da_append_many(a, da, new_items, new_items_count)                                       \
     do {                                                                                              \
-        if ((da)->count + (new_items_count) > (da)->capacity) {                                       \
-            size_t new_capacity = (da)->capacity;                                                     \
-            if (new_capacity == 0) new_capacity = ARENA_DA_INIT_CAP;                                  \
-            while ((da)->count + (new_items_count) > new_capacity) new_capacity *= 2;                 \
-            (da)->items = cast_ptr((da)->items)arena_realloc(                                         \
-                (a), (da)->items,                                                                     \
-                (da)->capacity*sizeof(*(da)->items),                                                  \
-                new_capacity*sizeof(*(da)->items));                                                   \
-            (da)->capacity = new_capacity;                                                            \
-        }                                                                                             \
+        arena_da_reserve((a), (da), (da)->count + (new_items_count));                                 \
         arena_memcpy((da)->items + (da)->count, (new_items), (new_items_count)*sizeof(*(da)->items)); \
         (da)->count += (new_items_count);                                                             \
     } while (0)

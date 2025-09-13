@@ -160,10 +160,11 @@ bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Fil
         }
 
         uint32_t length = read_uint32_be(device);
+        if (length >= PNG_PARSE_MAX_CHUNK_SIZE) return false;
+
         uint8_t chunk_type[4];
         bytes_read = fs_read_device(device, chunk_type, sizeof(chunk_type));
         if ((uint32_t) bytes_read != sizeof(chunk_type)) return false;
-        if (length >= PNG_PARSE_MAX_CHUNK_SIZE) return false;
 
         uint8_t *a = (uint8_t*) &length;
         arena_da_append_many(arena, &file.bytes, &a[3], sizeof(uint8_t));
@@ -172,15 +173,14 @@ bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Fil
         arena_da_append_many(arena, &file.bytes, &a[0], sizeof(uint8_t));
         arena_da_append_many(arena, &file.bytes, chunk_type, sizeof(chunk_type));
 
-        // TODO(nic): remove this malloc, something like `arena_da_ensure_cap` should do it
-        unsigned char *chunk_data = malloc(length);
+        arena_da_reserve(arena, &file.bytes, file.bytes.count + length);
+        unsigned char *chunk_data = &file.bytes.items[file.bytes.count];
+
         int64_t bytes_read = fs_read_device(device, chunk_data, length);
         if ((uint32_t) bytes_read != length) {
-            free(chunk_data);
             return false;
         }
-        arena_da_append_many(arena, &file.bytes, chunk_data, length);
-        free(chunk_data);
+        file.bytes.count += length;
 
         unsigned char crc[4];
         bytes_read = fs_read_device(device, crc, sizeof(crc));
