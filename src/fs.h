@@ -48,11 +48,9 @@ typedef enum {
     FS_MOUNT_POINT_NTFS,
 } Fs_Mount_Point_Type;
 
-// TODO(nic): make this arena allocatable
-#define FS_PATH_CAP 2048
 typedef struct {
-    char path[FS_PATH_CAP];
-    char device_path[FS_PATH_CAP];
+    char *path;
+    char *device_path;
     Fs_Mount_Point_Type type;
 } Fs_Mount_Point;
 

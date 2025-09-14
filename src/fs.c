@@ -68,8 +68,14 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
 
         Fs_Mount_Point mount_point = {0};
         mount_point.type = type;
-        memcpy(mount_point.path, path.data, min(path.count, FS_PATH_CAP));
-        memcpy(mount_point.device_path, device_path.data, min(device_path.count, FS_PATH_CAP));
+
+        mount_point.path = arena_alloc(arena, path.count + 1);
+        memcpy(mount_point.path, path.data, path.count);
+        mount_point.path[path.count] = '\0';
+
+        mount_point.device_path = arena_alloc(arena, device_path.count + 1);
+        memcpy(mount_point.device_path, device_path.data, device_path.count);
+        mount_point.device_path[device_path.count] = '\0';
 
         arena_da_append(arena, mount_points, mount_point);
     }
@@ -85,7 +91,7 @@ bool fs_is_device_valid(Fs_Device *device) {
 #ifdef _WIN32
     return *device != INVALID_HANDLE_VALUE;
 #else
-    return *device == 0;
+    return *device >= 0;
 #endif
 }
 
@@ -264,11 +270,11 @@ const char *fs_get_last_error(void) {
     FormatMessage(
         FORMAT_MESSAGE_FROM_SYSTEM,
         NULL, error_code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        fs_error_buf, FS_ERROR_BUF_CAP, NULL
+        fs_error_buf, FS_ERROR_BUF_CAP - 1, NULL
     );
     return fs_error_buf;
 #else
-    strncpy(fs_error_buf, strerror(errno), FS_ERROR_BUF_CAP);
+    strncpy(fs_error_buf, strerror(errno), FS_ERROR_BUF_CAP - 1);
     return fs_error_buf;
 #endif
 }

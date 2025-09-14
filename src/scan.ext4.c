@@ -138,7 +138,7 @@ bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Fil
     int name_size = snprintf(NULL, 0, name_fmt, file_offset);
 
     file.name = arena_alloc(arena, name_size + 1);
-    snprintf(file.name, name_size, name_fmt, file_offset);
+    snprintf(file.name, name_size + 1, name_fmt, file_offset);
     file.name[name_size] = '\0';
 
     if (!fs_set_device_offset(device, file_offset)) {
