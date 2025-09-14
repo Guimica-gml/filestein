@@ -222,9 +222,11 @@ int main(void) {
         if (GuiButton(scan_button_rect, "SCAN")) {
             ui_text_list_reset(&file_list);
             file_index = -1;
+            arena_reset(&recovered_files_arena);
+            memset(&recovered_files, 0, sizeof(recovered_files));
 
             Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
-            scan = scan_mount_point(&arena, mount_point);
+            scan = scan_mount_point(&recovered_files_arena, mount_point);
             if (scan.data == NULL) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
             }
@@ -259,9 +261,6 @@ int main(void) {
         if (scan.data != NULL) {
             Scan_Progress_Report report = scan_get_progress_report(scan);
             if (report.done) {
-                arena_reset(&recovered_files_arena);
-                memset(&recovered_files, 0, sizeof(recovered_files));
-
                 scan_collect_files(scan, &recovered_files_arena, &recovered_files);
                 for (size_t i = 0; i < recovered_files.count; ++i) {
                     Scan_File *file = &recovered_files.items[i];

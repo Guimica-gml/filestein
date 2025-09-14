@@ -2,47 +2,78 @@
 
 Scan scan_ntfs_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
     (void) arena;
-    //(void) mount_point;
 
     Fs_Device device;
-    bool success = fs_open_device(&device, mount_point);
-    if (!success) {
-        printf("Error: %s\n", fs_get_last_error());
-        fflush(stdout);
+    if (!fs_open_device(&device, mount_point)) {
+        fprintf(stderr, "Error: could not open file `%s`: %s\n", mount_point->device_path, fs_get_last_error());
         return (Scan) {0};
     }
 
-    size_t volume_size;
-    success = fs_get_volume_size(&device, &volume_size);
-    assert(success);
-    printf("Volume size: %zu\n", volume_size);
-    fflush(stdout);
+    struct ntfs_pbs pbs = {0};
 
-    {
-        size_t off = 0;
-        unsigned char buf[1024];
-        int64_t bytes_read = fs_read_device_off(&device, buf, sizeof(buf), off);
-        if (bytes_read != sizeof(buf)) {
-            printf("Error: %s\n", fs_get_last_error());
-            fflush(stdout);
-            return (Scan) {0};
-        }
-        scan_hexdump(buf, sizeof(buf), off);
+    int64_t bytes_read = fs_read_device(&device, &pbs, sizeof(pbs));
+    if (bytes_read != sizeof(pbs)) {
+        fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
+        return (Scan) {0};
+    }
+    scan_hexdump(&pbs, sizeof(pbs), 0);
+
+    printf("-------------\n");
+    printf("magic: 0x%08zX\n", pbs.magic);
+    printf("bytes per sector: %d\n", pbs.bytes_per_sector);
+    printf("sectors per cluster: %d\n", pbs.sectors_per_cluster);
+    printf("mft cluster number: %ld\n", pbs.mft_cluster_number);
+    printf("-------------\n");
+
+    size_t mft_offset = pbs.mft_cluster_number * pbs.sectors_per_cluster * pbs.bytes_per_sector;
+    if (!fs_set_device_offset(&device, mft_offset)) {
+        fprintf(stderr, "Error: could not set file pointer: %s\n", fs_get_last_error());
+        return (Scan) {0};
     }
 
-    printf("---------------\n");
+    struct ntfs_record record;
+    bytes_read = fs_read_device(&device, &record, sizeof(record));
+    if (bytes_read != sizeof(record)) {
+        fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
+        return (Scan) {0};
+    }
+    scan_hexdump(&record, sizeof(record), mft_offset);
 
-    {
-        size_t off = 2;
-        unsigned char buf[512];
-        int64_t bytes_read = fs_read_device_off(&device, buf, sizeof(buf), off);
-        if (bytes_read != sizeof(buf)) {
-            printf("Error: %s\n", fs_get_last_error());
-            fflush(stdout);
+    printf("-------------\n");
+    printf("attributes_offset: %u\n", record.attributes_offset);
+    printf("-------------\n");
+
+    size_t attrs_offset = mft_offset + record.attributes_offset;
+    if (!fs_set_device_offset(&device, attrs_offset)) {
+        fprintf(stderr, "Error: could not set file pointer: %s\n", fs_get_last_error());
+        return (Scan) {0};
+    }
+
+    uint32_t attr_type = 0;
+    do {
+        bytes_read = fs_read_device(&device, &attr_type, sizeof(attr_type));
+        if (bytes_read != sizeof(attr_type)) {
+            fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
             return (Scan) {0};
         }
-        scan_hexdump(buf, sizeof(buf), off);
-    }
+        scan_hexdump(&attr_type, sizeof(attr_type), attrs_offset);
+
+        printf("-------------\n");
+        printf("attr_type: 0x%04X\n", attr_type);
+
+        if (attr_type == 0x10) {
+            struct ntfs_attr_standard_info attr;
+            bytes_read = fs_read_device(&device, &attr, sizeof(attr));
+            if (bytes_read != sizeof(attr)) {
+                fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
+                return (Scan) {0};
+            }
+            printf("-------------\n");
+            scan_hexdump(&attr, sizeof(attr), 0);
+        } else {
+            assert(0 && "unimplemented");
+        }
+    } while (attr_type != 0xFFFFFFFF);
 
     fs_close_device(&device);
     return (Scan) {0};
