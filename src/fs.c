@@ -2,34 +2,44 @@
 #include "./nob.h"
 
 bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
+#define BUFFER_CAP 2048
 #ifdef _WIN32
-    char buffer[FS_PATH_CAP] = {0};
-    HANDLE first_vol = FindFirstVolume(buffer, FS_PATH_CAP);
+    char buffer[BUFFER_CAP] = {0};
+    HANDLE first_vol = FindFirstVolume(buffer, BUFFER_CAP);
     if (first_vol == INVALID_HANDLE_VALUE) {
         return false;
     }
 
     do {
-        char volume_letter[FS_PATH_CAP] = {0};
+        char volume_letter[BUFFER_CAP] = {0};
         unsigned long int volume_letter_size;
-        if (!GetVolumePathNamesForVolumeName(buffer, volume_letter, FS_PATH_CAP, &volume_letter_size)) {
+        if (!GetVolumePathNamesForVolumeName(buffer, volume_letter, BUFFER_CAP, &volume_letter_size)) {
             continue;
         }
-        assert(volume_letter_size <= FS_PATH_CAP);
+        assert(volume_letter_size <= BUFFER_CAP);
 
-        char fs_type[FS_PATH_CAP] = {0};
-        if (!GetVolumeInformation(volume_letter, NULL, 0, NULL, NULL, NULL, fs_type, FS_PATH_CAP)) {
+        char fs_type[BUFFER_CAP] = {0};
+        if (!GetVolumeInformation(volume_letter, NULL, 0, NULL, NULL, NULL, fs_type, BUFFER_CAP)) {
             continue;
         }
 
         if (strcmp(fs_type, "NTFS") == 0) {
             Fs_Mount_Point mount_point = {0};
             mount_point.type = FS_MOUNT_POINT_NTFS;
-            strcpy(mount_point.path, volume_letter);
-            memcpy(mount_point.device_path, buffer, strlen(buffer) - 1);
+
+            size_t volume_letter_size = strlen(volume_letter);
+            mount_point.path = arena_alloc(arena, volume_letter_size + 1);
+            memcpy(mount_point.path, volume_letter, volume_letter_size);
+            mount_point.path[volume_letter_size] = '\0';
+
+            size_t buffer_size = strlen(buffer) - 1;
+            mount_point.device_path = arena_alloc(arena, buffer_size + 1);
+            memcpy(mount_point.device_path, buffer, buffer_size);
+            mount_point.device_path[buffer_size] = '\0';
+
             arena_da_append(arena, mount_points, mount_point);
         }
-    } while (FindNextVolume(first_vol, buffer, FS_PATH_CAP));
+    } while (FindNextVolume(first_vol, buffer, BUFFER_CAP));
 
     FindVolumeClose(first_vol);
     return true;
@@ -43,7 +53,6 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
         nob_return_defer(false);
     }
 
-#define BUFFER_CAP 2048
     char buffer[BUFFER_CAP] = {0};
     while (fgets(buffer, BUFFER_CAP, file) != NULL) {
         Nob_String_View sv = { strlen(buffer), buffer };
@@ -79,12 +88,12 @@ bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points) {
 
         arena_da_append(arena, mount_points, mount_point);
     }
-#undef BUFFER_CAP
 
 defer:
     if (file) fclose(file);
     return result;
 #endif
+#undef BUFFER_CAP
 }
 
 bool fs_is_device_valid(Fs_Device *device) {

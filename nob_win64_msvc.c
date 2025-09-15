@@ -13,6 +13,7 @@
                "cl.exe",                        \
                "/Z7",                           \
                "/std:c11",                      \
+               "/experimental:c11atomics",      \
                "/I", RAYLIB_SRC_DIR)            \
 
 #define cc_add_libs(cmd)                        \
