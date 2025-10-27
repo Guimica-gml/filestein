@@ -67,6 +67,7 @@ bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point);
 int64_t fs_read_device(Fs_Device *device, void *buf, size_t count);
 int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset);
 bool fs_set_device_offset(Fs_Device *device, size_t offset);
+bool fs_get_device_offset(Fs_Device *device, size_t *offset);
 bool fs_close_device(Fs_Device *device);
 
 typedef Fs_Thread_Result (Fs_Thread_Routine)(void *);

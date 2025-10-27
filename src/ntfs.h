@@ -5,7 +5,7 @@
 
 #pragma pack(push, 1)
 
-struct ntfs_pbs {
+typedef struct {
     uint8_t x86_insts[3];
     uint64_t magic;
     uint16_t bytes_per_sector;
@@ -31,9 +31,9 @@ struct ntfs_pbs {
     uint32_t checksum;
     uint8_t bootstrap_code[426];
     uint16_t end_of_sector_marker;
-};
+} Ntfs_Pbs;
 
-struct ntfs_record {
+typedef struct {
     char record_type[4];
     uint16_t update_sequence_offset;
     uint16_t update_sequence_length;
@@ -48,9 +48,39 @@ struct ntfs_record {
     uint32_t next_attribute_index;
     uint32_t reserved;
     uint64_t record_number;
-};
+} Ntfs_Record;
 
-struct ntfs_attr_standard_info {
+typedef struct {
+    uint32_t attr_type;
+    uint32_t length;
+    uint8_t non_resident_flag;
+    uint8_t name_length;
+    uint16_t offset_to_name;
+    uint16_t flags;
+    uint16_t attr_id;
+    union {
+        struct {
+            uint32_t attr_length;
+            uint16_t offset_to_attr;
+            uint8_t indexed_flag;
+            uint8_t padding;
+        } resident;
+        struct {
+            uint64_t starting_vcn;
+            uint64_t last_vcn;
+            uint16_t data_runs_offset;
+            uint16_t compression_unit_size;
+            uint32_t padding;
+            uint64_t allocated_attr_length;
+            uint64_t real_attr_length;
+            uint64_t initialized_stream_length;
+        } non_resident;
+    };
+    uint8_t *data_runs; // only set if non-resident
+    char *name;         // only set if named
+} Ntfs_Attr_Header;
+
+typedef struct {
     uint64_t creation_time;
     uint64_t altered_time;
     uint64_t mft_changed_time;
@@ -63,7 +93,49 @@ struct ntfs_attr_standard_info {
     uint32_t security_id;
     uint64_t quota_charged;
     uint64_t update_sequence_number;
-};
+} Ntfs_Standard_Info;
+
+typedef struct {
+    uint64_t file_ref_to_parent_dir;
+    uint64_t creation_time;
+    uint64_t altered_time;
+    uint64_t mft_changed_time;
+    uint64_t last_read_time;
+    uint64_t allocated_size;
+    uint64_t real_size;
+    uint32_t flags;
+    uint32_t reserved;
+    uint8_t filename_length;
+    uint8_t filename_namespace;
+    char *filename;
+} Ntfs_File_Name;
+
+typedef struct {
+    void *ptr;
+} Ntfs_Data;
+
+typedef struct {
+    uint8_t *table;
+} Ntfs_Bitmap;
+
+typedef enum {
+    NTFS_ATTR_END,
+    NTFS_ATTR_STANDARD_INFO,
+    NTFS_ATTR_FILE_NAME,
+    NTFS_ATTR_DATA,
+    NTFS_ATTR_BITMAP,
+} Ntfs_Attr_Type;
+
+typedef struct {
+    Ntfs_Attr_Type type;
+    Ntfs_Attr_Header header;
+    union {
+        Ntfs_Standard_Info std_info;
+        Ntfs_File_Name file_name;
+        Ntfs_Data data;
+        Ntfs_Bitmap bitmap;
+    } as;
+} Ntfs_Attr;
 
 #pragma pack(pop)
 

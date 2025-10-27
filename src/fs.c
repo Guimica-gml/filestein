@@ -171,8 +171,20 @@ int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t of
 #endif
 }
 
+bool fs_get_device_offset(Fs_Device *device, size_t *offset) {
+#ifdef _WIN32
+    *offset = SetFilePointer(*device, 0, NULL, FILE_CURRENT);
+    return *offset != INVALID_SET_FILE_POINTER;
+#else
+    int64_t result = lseek64(*device, 0, SEEK_CUR);
+    *offset = result;
+    return result >= 0;
+#endif
+}
+
 bool fs_set_device_offset(Fs_Device *device, size_t offset) {
 #ifdef _WIN32
+    // TODO(nic): I should separate offset in two 32bit int numbers and pass in separately here
     return SetFilePointer(*device, offset, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
 #else
     return lseek64(*device, offset, SEEK_SET) >= 0;
