@@ -76,65 +76,8 @@ typedef struct {
             uint64_t initialized_stream_length;
         } non_resident;
     };
-    uint8_t *data_runs; // only set if non-resident
-    char *name;         // only set if named
-} Ntfs_Attr_Header;
-
-typedef struct {
-    uint64_t creation_time;
-    uint64_t altered_time;
-    uint64_t mft_changed_time;
-    uint64_t last_read_time;
-    uint32_t dos_perms;
-    uint32_t max_number_versions;
-    uint32_t version_number;
-    uint32_t class_id;
-    uint32_t owner_id;
-    uint32_t security_id;
-    uint64_t quota_charged;
-    uint64_t update_sequence_number;
-} Ntfs_Standard_Info;
-
-typedef struct {
-    uint64_t file_ref_to_parent_dir;
-    uint64_t creation_time;
-    uint64_t altered_time;
-    uint64_t mft_changed_time;
-    uint64_t last_read_time;
-    uint64_t allocated_size;
-    uint64_t real_size;
-    uint32_t flags;
-    uint32_t reserved;
-    uint8_t filename_length;
-    uint8_t filename_namespace;
-    char *filename;
-} Ntfs_File_Name;
-
-typedef struct {
-    void *ptr;
-} Ntfs_Data;
-
-typedef struct {
-    uint8_t *table;
-} Ntfs_Bitmap;
-
-typedef enum {
-    NTFS_ATTR_END,
-    NTFS_ATTR_STANDARD_INFO,
-    NTFS_ATTR_FILE_NAME,
-    NTFS_ATTR_DATA,
-    NTFS_ATTR_BITMAP,
-} Ntfs_Attr_Type;
-
-typedef struct {
-    Ntfs_Attr_Type type;
-    Ntfs_Attr_Header header;
-    union {
-        Ntfs_Standard_Info std_info;
-        Ntfs_File_Name file_name;
-        Ntfs_Data data;
-        Ntfs_Bitmap bitmap;
-    } as;
+    char *name;
+    uint8_t *content;
 } Ntfs_Attr;
 
 #pragma pack(pop)

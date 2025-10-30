@@ -1,49 +1,61 @@
 #include "./ntfs.h"
 
 typedef struct {
-    Ntfs_Attr *items;
+    uint8_t *items;
     size_t count;
     size_t capacity;
-} Ntfs_Attrs;
+} Bytes;
 
-typedef bool (*Ntfs_Read_Attr_Proc)(Arena *arena, Fs_Device *device, Ntfs_Attr *attr);
+typedef struct {
+    Ntfs_Record *items;
+    size_t count;
+    size_t capacity;
+} Ntfs_Records;
 
-bool read_ntfs_standard_info(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
-    (void) arena;
-    assert(!attr->header.non_resident_flag && "unreachable");
-    attr->type = NTFS_ATTR_STANDARD_INFO;
-    int64_t bytes_read = fs_read_device(device, &attr->as.std_info, sizeof(Ntfs_Standard_Info));
-    if (bytes_read != sizeof(Ntfs_Standard_Info)) {
-        return false;
-    }
-    return true;
-}
-
-bool read_ntfs_file_name(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
-    attr->type = NTFS_ATTR_FILE_NAME;
-    assert(!attr->header.non_resident_flag && "unreachable");
-    int64_t size = offsetof(Ntfs_File_Name, filename);
-    int64_t bytes_read = fs_read_device(device, &attr->as.file_name, size);
-    if (bytes_read != size) {
+bool read_ntfs_attr(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
+    int64_t known_size = offsetof(Ntfs_Attr, resident);
+    int64_t bytes_read = fs_read_device(device, attr, known_size);
+    if (bytes_read != known_size) {
         return false;
     }
 
-    int64_t actual_filename_length = attr->as.file_name.filename_length * 2;
-    attr->as.file_name.filename = arena_alloc(arena, actual_filename_length);
-    assert(attr->as.file_name.filename != NULL);
-    bytes_read = fs_read_device(device, attr->as.file_name.filename, actual_filename_length);
-    if (bytes_read != actual_filename_length) {
+    int64_t bs_size = (attr->non_resident_flag)
+        ? sizeof(attr->non_resident)
+        : sizeof(attr->resident);
+    bytes_read = fs_read_device(device, (uint8_t*)attr + known_size, bs_size);
+    if (bytes_read != bs_size) {
         return false;
     }
 
-    // NOTE(nic): there's padding until the next addres divisble by 8
-    size_t curr_offset;
-    if (!fs_get_device_offset(device, &curr_offset)) {
+    if (attr->name_length > 0) {
+        int64_t name_length = attr->name_length * 2;
+        attr->name = arena_alloc(arena, name_length);
+        assert(attr->name != NULL);
+        bytes_read = fs_read_device(device, attr->name, name_length);
+        if (bytes_read != name_length) {
+            return false;
+        }
+    }
+
+    int64_t content_length = (attr->non_resident_flag)
+        ? (attr->length - offsetof(Ntfs_Attr, name))
+        : attr->resident.attr_length;
+    attr->content = arena_alloc(arena, content_length);
+    assert(attr->content != NULL);
+    bytes_read = fs_read_device(device, attr->content, content_length);
+    if (bytes_read != content_length) {
         return false;
     }
 
-    size_t remainder = curr_offset % 8;
-    if (remainder != 0) {
+    // NOTE(nic): There's padding until the next divisble by 8 address
+    //            0x30 -> File Name attribute
+    if (attr->attr_type == 0x30) {
+        size_t curr_offset;
+        if (!fs_get_device_offset(device, &curr_offset)) {
+            return false;
+        }
+
+        size_t remainder = curr_offset % 8;
         size_t final_offset = curr_offset + (8 - remainder);
         if (!fs_set_device_offset(device, final_offset)) {
             return false;
@@ -53,111 +65,77 @@ bool read_ntfs_file_name(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
     return true;
 }
 
-bool read_ntfs_data(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
-    (void) arena;
-    (void) device;
-
-    assert(attr->header.non_resident_flag && "unreachable");
-    attr->type = NTFS_ATTR_DATA;
-
-    /*
-    char *data_runs = arena_alloc(arena, size);
-    assert(data_runs != NULL);
-
-    int64_t bytes_read = fs_read_device(device, data_runs, size);
-    if (bytes_read != size) {
-        return false;
-    }
-
-    scan_hexdump(data_runs, size, 0x00);
-    */
-    return true;
-}
-
-typedef struct {
-    uint32_t code;
-    Ntfs_Read_Attr_Proc proc;
-} Ntfs_Attr_Proc;
-
-Ntfs_Attr_Proc ntfs_attr_procs[] = {
-    { .code = 0x10, .proc = read_ntfs_standard_info },
-    { .code = 0x30, .proc = read_ntfs_file_name },
-    { .code = 0x80, .proc = read_ntfs_data },
-    //{ .code = 0xB0, .proc = read_ntfs_bitmap },
-};
-size_t ntfs_attr_procs_count = sizeof(ntfs_attr_procs)/sizeof(*ntfs_attr_procs);
-
-bool read_ntfs_attr_header(Arena *arena, Fs_Device *device, Ntfs_Attr_Header *header) {
-    int64_t known_size = offsetof(Ntfs_Attr_Header, resident);
-    int64_t bytes_read = fs_read_device(device, header, known_size);
-    if (bytes_read != known_size) {
-        return false;
-    }
-
-    int64_t bs_size = (header->non_resident_flag)
-        ? sizeof(header->non_resident)
-        : sizeof(header->resident);
-    bytes_read = fs_read_device(device, (uint8_t*)header + known_size, bs_size);
-    if (bytes_read != bs_size) {
-        return false;
-    }
-
-    if (header->name_length > 0) {
-        int64_t actual_length = header->name_length * 2;
-        header->name = arena_alloc(arena, actual_length);
-        assert(header->name != NULL);
-        bytes_read = fs_read_device(device, header->name, actual_length);
-        if (bytes_read != actual_length) {
-            return false;
-        }
-    }
-
-    if (header->non_resident_flag) {
-        int64_t data_runs_length = header->length - offsetof(Ntfs_Attr_Header, data_runs);
-        header->data_runs = arena_alloc(arena, data_runs_length);
-        assert(header->data_runs != NULL);
-        bytes_read = fs_read_device(device, header->data_runs, data_runs_length);
-        if (bytes_read != data_runs_length) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool read_ntfs_attrs(Arena *arena, Ntfs_Attrs *attrs, Fs_Device *device, size_t attrs_offset) {
+bool find_ntfs_data(Arena *arena, Fs_Device *device, Ntfs_Attr *attr, size_t attrs_offset) {
     if (!fs_set_device_offset(device, attrs_offset)) {
         return false;
     }
-
-    while (true) {
-        Ntfs_Attr_Header header = {0};
-        if (!read_ntfs_attr_header(arena, device, &header)) {
+    while (attr->attr_type != (uint32_t)0xFFFFFFFF) {
+        if (!read_ntfs_attr(arena, device, attr)) {
             return false;
         }
-        if (header.attr_type == (uint32_t)0xFFFFFFFF) {
+        if (attr->attr_type == 0x80) {
+            return true;
+        }
+    }
+    assert(0 && "unreachable: no data attribute?");
+}
+
+bool get_bytes_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t cluster_size, Bytes *bytes) {
+    assert(attr.attr_type == 0x80 && "Not a Data attribute");
+    assert(attr.non_resident_flag && "TODO: implement resident version of this code");
+
+    size_t cursor = 0;
+    size_t global_offset = 0;
+
+    while (true) {
+        uint8_t head = attr.content[cursor++];
+        if (head == 0) {
             break;
         }
 
-        bool found = false;
-        for (size_t i = 0; i < ntfs_attr_procs_count; ++i) {
-            Ntfs_Attr_Proc *proc = &ntfs_attr_procs[i];
-            if (header.attr_type == proc->code) {
-                Ntfs_Attr attr = {0};
-                attr.header = header;
-                if (!proc->proc(arena, device, &attr)) {
-                    return false;
-                }
-                arena_da_append(arena, attrs, attr);
-                found = true;
-                break;
-            }
-        }
+        uint8_t length_bytes_count = head & 0x0F;
+        uint8_t offset_bytes_count = (head & 0xF0) >> 4;
 
-        if (!found) {
-            fprintf(stderr, "Error: unimplemented attribute type 0x%08X\n", header.attr_type);
+        uint32_t length_in_clusters = 0;
+        memcpy(&length_in_clusters, &attr.content[cursor], length_bytes_count);
+        cursor += length_bytes_count;
+
+        uint32_t offset_in_clusters = 0;
+        memcpy(&offset_in_clusters, &attr.content[cursor], offset_bytes_count);
+        cursor += offset_bytes_count;
+
+        global_offset += offset_in_clusters * cluster_size;
+        if (!fs_set_device_offset(device, global_offset)) {
             return false;
         }
+
+        int64_t length = length_in_clusters * cluster_size;
+        arena_da_reserve(arena, bytes, bytes->count + length);
+
+        uint8_t *start = &bytes->items[bytes->count];
+        int64_t bytes_read = fs_read_device(device, start, length);
+        if (bytes_read != length) {
+            return false;
+        }
+        bytes->count += length;
+    }
+
+    return true;
+}
+
+bool get_records_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t cluster_size, Ntfs_Records *records) {
+    assert(attr.attr_type == 0x80 && "Not a Data attribute");
+    Bytes bytes = {0};
+
+    if (!get_bytes_from_data(arena, device, attr, cluster_size, &bytes)) {
+        return false;
+    }
+
+    size_t record_count = bytes.count / cluster_size;
+    for (size_t i = 0; i < record_count; ++i) {
+        Ntfs_Record record;
+        memcpy(&record, bytes.items + i*cluster_size, sizeof(Ntfs_Record));
+        arena_da_append(arena, records, record);
     }
 
     return true;
@@ -173,21 +151,15 @@ Scan scan_ntfs_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
     }
 
     Ntfs_Pbs pbs = {0};
-
     int64_t bytes_read = fs_read_device(&device, &pbs, sizeof(pbs));
     if (bytes_read != sizeof(pbs)) {
         fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
         return (Scan) {0};
     }
 
-    printf("-------------\n");
-    printf("magic: 0x%08zX\n", pbs.magic);
-    printf("bytes per sector: %d\n", pbs.bytes_per_sector);
-    printf("sectors per cluster: %d\n", pbs.sectors_per_cluster);
-    printf("mft cluster number: %ld\n", pbs.mft_cluster_number);
-    printf("-------------\n");
+    size_t cluster_size = pbs.sectors_per_cluster * pbs.bytes_per_sector;
+    size_t mft_offset = pbs.mft_cluster_number * cluster_size;
 
-    size_t mft_offset = pbs.mft_cluster_number * pbs.sectors_per_cluster * pbs.bytes_per_sector;
     if (!fs_set_device_offset(&device, mft_offset)) {
         fprintf(stderr, "Error: could not set file pointer: %s\n", fs_get_last_error());
         return (Scan) {0};
@@ -201,12 +173,19 @@ Scan scan_ntfs_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
     }
 
     size_t attrs_offset = mft_offset + record.attributes_offset;
-    Ntfs_Attrs attrs = {0};
-    if (!read_ntfs_attrs(arena, &attrs, &device, attrs_offset)) {
-        fprintf(stderr, "Error: could not read mft attributes: %s\n", fs_get_last_error());
+    Ntfs_Attr attr = {0};
+    if (!find_ntfs_data(arena, &device, &attr, attrs_offset)) {
+        fprintf(stderr, "Error: could not find mft data attribute: %s\n", fs_get_last_error());
         return (Scan) {0};
     }
 
+    Ntfs_Records records = {0};
+    if (!get_records_from_data(arena, &device, attr, cluster_size, &records)) {
+        fprintf(stderr, "Error: could not get file records from mft: %s\n", fs_get_last_error());
+        return (Scan) {0};
+    }
+
+    __asm__("int3");
     fs_close_device(&device);
     return (Scan) {0};
 }
