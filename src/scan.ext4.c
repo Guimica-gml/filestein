@@ -1,6 +1,17 @@
 #include "./ext4.h"
 
 typedef struct {
+    size_t *items;
+    size_t count;
+    size_t capacity;
+} File_Offs;
+
+#define FILE_SET_BUCKET_CAP 4096
+typedef struct {
+    File_Offs bucket[FILE_SET_BUCKET_CAP];
+} File_Set;
+
+typedef struct {
     Fs_Thread id;
     Arena arena;
     File_Set file_set;
@@ -35,6 +46,33 @@ typedef struct {
     Scan_Chunk_Thread *scan_chunk_threads;
     size_t threads_count;
 } Scan_Device_Thread;
+
+size_t hash_bytes(void *buf, size_t buf_size) {
+    size_t hash = 17;
+    for (size_t i = 0; i < buf_size; ++i) {
+        hash = (hash * 13) + ((uint8_t*)buf)[i];
+    }
+    return hash;
+}
+
+void file_set_add(Arena *arena, File_Set *set, size_t file_offset) {
+    size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
+    File_Offs *file_offs = &set->bucket[index];
+    // Usually we would need to check if the value is already there
+    // but in our case we know it's not necessary
+    arena_da_append(arena, file_offs, file_offset);
+}
+
+bool file_set_contains(File_Set *set, size_t file_offset) {
+    size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
+    File_Offs *file_offs = &set->bucket[index];
+    for (size_t i = 0; i < file_offs->count; ++i) {
+        if (file_offs->items[i] == file_offset) {
+            return true;
+        }
+    }
+    return false;
+}
 
 void scan_extent(Arena *arena, Fs_Device *device, size_t extent_offset, size_t block_size, File_Set *file_set) {
     struct ext4_extent_header header;

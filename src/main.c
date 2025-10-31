@@ -226,7 +226,7 @@ int main(void) {
             memset(&recovered_files, 0, sizeof(recovered_files));
 
             Fs_Mount_Point *mount_point = &mount_points.items[device_index - 1];
-            scan = scan_mount_point(&recovered_files_arena, mount_point);
+            scan = scan_start(&recovered_files_arena, mount_point);
             if (scan.data == NULL) {
                 fprintf(stderr, "Error: could not begin scan of `%s`\n", mount_point->path);
             }
@@ -267,7 +267,7 @@ int main(void) {
                     ui_text_list_add(&file_list, file->name, scan_file_type_to_cstr(file->type));
                 }
 
-                scan_free(scan);
+                scan_deinit(scan);
                 scan.data = NULL;
             }
             DrawProgressReport(report);

@@ -15,7 +15,7 @@ typedef enum {
 } Scan_File_Type;
 
 typedef struct {
-    unsigned char *items;
+    uint8_t *items;
     size_t count;
     size_t capacity;
 } Scan_File_Builder;
@@ -49,10 +49,10 @@ typedef struct {
     void *data;
 } Scan;
 
-Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point);
+Scan scan_start(Arena *arena, Fs_Mount_Point *mount_point);
 Scan_Progress_Report scan_get_progress_report(Scan scan);
 void scan_collect_files(Scan scan, Arena *arena, Scan_Files *files);
-void scan_free(Scan scan);
+void scan_deinit(Scan scan);
 
 const char *scan_file_type_get_ext(Scan_File_Type type);
 const char *scan_file_type_to_cstr(Scan_File_Type type);

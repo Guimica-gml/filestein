@@ -46,6 +46,7 @@ extern _Thread_local char fs_error_buf[FS_ERROR_BUF_CAP];
 typedef enum {
     FS_MOUNT_POINT_EXT4,
     FS_MOUNT_POINT_NTFS,
+    FS_MOUNT_POINT_COUNT,
 } Fs_Mount_Point_Type;
 
 typedef struct {

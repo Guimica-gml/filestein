@@ -7,88 +7,53 @@
 #include <string.h>
 #include <errno.h>
 
-typedef struct {
-    size_t *items;
-    size_t count;
-    size_t capacity;
-} File_Offs;
-
-#define FILE_SET_BUCKET_CAP 4096
-typedef struct {
-    File_Offs bucket[FILE_SET_BUCKET_CAP];
-} File_Set;
-
-size_t hash_bytes(void *buf, size_t buf_size) {
-    size_t hash = 17;
-    for (size_t i = 0; i < buf_size; ++i) {
-        hash = (hash * 13) + ((uint8_t*)buf)[i];
-    }
-    return hash;
-}
-
-void file_set_add(Arena *arena, File_Set *set, size_t file_offset) {
-    size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
-    File_Offs *file_offs = &set->bucket[index];
-    // Usually we would need to check if the value is already there
-    // but in our case we know it's not necessary
-    arena_da_append(arena, file_offs, file_offset);
-}
-
-bool file_set_contains(File_Set *set, size_t file_offset) {
-    size_t index = hash_bytes(&file_offset, sizeof(file_offset)) % FILE_SET_BUCKET_CAP;
-    File_Offs *file_offs = &set->bucket[index];
-    for (size_t i = 0; i < file_offs->count; ++i) {
-        if (file_offs->items[i] == file_offset) {
-            return true;
-        }
-    }
-    return false;
-}
-
 #include "./scan.ntfs.c"
 #include "./scan.ext4.c"
 
-Scan scan_mount_point(Arena *arena, Fs_Mount_Point *mount_point) {
-    switch (mount_point->type) {
-    case FS_MOUNT_POINT_EXT4: return scan_ext4_mount_point(arena, mount_point);
-    case FS_MOUNT_POINT_NTFS: return scan_ntfs_mount_point(arena, mount_point);
-    default:
-        assert(0 && "unreachable");
-        exit(1); // dead code, so cl.exe shuts up
-    }
+typedef struct {
+    Scan (*start)(Arena *arena, Fs_Mount_Point *mount_point);
+    Scan_Progress_Report (*get_progress_report)(void *info);
+    void (*collect_files)(void *info, Arena *arena, Scan_Files *files);
+    void (*deinit)(void *info);
+} Scan_Interface;
+
+static_assert(FS_MOUNT_POINT_COUNT == 2, "Non-exhaustive enumerator check, please update code below");
+Scan_Interface scan_interfaces[] = {
+    [FS_MOUNT_POINT_EXT4] = {
+        .start = scan_ext4_mount_point,
+        .get_progress_report = scan_ext4_get_progress_report,
+        .collect_files = scan_ext4_collect_files,
+        .deinit = scan_ext4_free,
+    },
+    [FS_MOUNT_POINT_NTFS] = {
+        .start = scan_ntfs_mount_point,
+        .get_progress_report = scan_ntfs_get_progress_report,
+        .collect_files = scan_ntfs_collect_files,
+        .deinit = scan_ntfs_free,
+    },
+};
+
+Scan scan_start(Arena *arena, Fs_Mount_Point *mount_point) {
+    Scan_Interface *interface = &scan_interfaces[mount_point->type];
+    return interface->start(arena, mount_point);
 }
 
 Scan_Progress_Report scan_get_progress_report(Scan scan) {
-    switch (scan.type) {
-    case FS_MOUNT_POINT_EXT4: return scan_ext4_get_progress_report(scan.data);
-    case FS_MOUNT_POINT_NTFS: return scan_ntfs_get_progress_report(scan.data);
-    default:
-        assert(0 && "unreachable");
-        exit(1); // dead code, so cl.exe shuts up
-    }
+    Scan_Interface *interface = &scan_interfaces[scan.type];
+    return interface->get_progress_report(scan.data);
 }
 
 void scan_collect_files(Scan scan, Arena *arena, Scan_Files *files) {
-    switch (scan.type) {
-    case FS_MOUNT_POINT_EXT4: scan_ext4_collect_files(scan.data, arena, files); break;
-    case FS_MOUNT_POINT_NTFS: scan_ntfs_collect_files(scan.data, arena, files); break;
-    default:
-        assert(0 && "unreachable");
-        exit(1); // dead code, so cl.exe shuts up
-    }
+    Scan_Interface *interface = &scan_interfaces[scan.type];
+    interface->collect_files(scan.data, arena, files);
 }
 
-void scan_free(Scan scan) {
+void scan_deinit(Scan scan) {
     if (scan.data == NULL) {
         return;
     }
-    switch (scan.type) {
-    case FS_MOUNT_POINT_EXT4: scan_ext4_free(scan.data); break;
-    case FS_MOUNT_POINT_NTFS: scan_ntfs_free(scan.data); break;
-    default:
-        assert(0 && "unreachable");
-        exit(1); // dead code, so cl.exe shuts up
-    }
+    Scan_Interface *interface = &scan_interfaces[scan.type];
+    interface->deinit(scan.data);
 }
 
 const char *scan_file_type_get_ext(Scan_File_Type type) {
