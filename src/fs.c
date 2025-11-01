@@ -96,11 +96,11 @@ defer:
 #undef BUFFER_CAP
 }
 
-bool fs_is_device_valid(Fs_Device *device) {
+bool fs_is_device_valid(Fs_Device device) {
 #ifdef _WIN32
-    return *device != INVALID_HANDLE_VALUE;
+    return device != INVALID_HANDLE_VALUE;
 #else
-    return *device >= 0;
+    return device >= 0;
 #endif
 }
 
@@ -122,19 +122,19 @@ bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point) {
 #endif
 }
 
-int64_t fs_read_device(Fs_Device *device, void *buf, size_t count) {
+int64_t fs_read_device(Fs_Device device, void *buf, size_t count) {
 #ifdef _WIN32
     DWORD bytes_read;
-    if (!ReadFile(*device, buf, count, &bytes_read, NULL)) {
+    if (!ReadFile(device, buf, count, &bytes_read, NULL)) {
         return -1;
     }
     return (int64_t)bytes_read;
 #else
-    return read(*device, buf, count);
+    return read(device, buf, count);
 #endif
 }
 
-int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset) {
+int64_t fs_read_device_off(Fs_Device device, void *buf, size_t count, size_t offset) {
 #ifdef _WIN32
 #define PAGE_SIZE 512
     size_t first_page = offset / PAGE_SIZE;
@@ -150,7 +150,7 @@ int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t of
     overlapped.OffsetHigh = (DWORD)(page_offset >> 32);
 
     DWORD bytes_read;
-    if (!ReadFile(*device, temp, page_count * PAGE_SIZE, &bytes_read, &overlapped)) {
+    if (!ReadFile(device, temp, page_count * PAGE_SIZE, &bytes_read, &overlapped)) {
         DWORD err = GetLastError();
         if (err != ERROR_HANDLE_EOF) {
             free(temp);
@@ -167,35 +167,36 @@ int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t of
     return (int64_t)actual_bytes_count;
 #undef PAGE_SIZE
 #else
-    return pread(*device, buf, count, offset);
+    return pread(device, buf, count, offset);
 #endif
 }
 
-bool fs_get_device_offset(Fs_Device *device, size_t *offset) {
+bool fs_get_device_offset(Fs_Device device, size_t *offset) {
 #ifdef _WIN32
-    *offset = SetFilePointer(*device, 0, NULL, FILE_CURRENT);
+    *offset = SetFilePointer(device, 0, NULL, FILE_CURRENT);
     return *offset != INVALID_SET_FILE_POINTER;
 #else
-    int64_t result = lseek64(*device, 0, SEEK_CUR);
+    int64_t result = lseek64(device, 0, SEEK_CUR);
     *offset = result;
     return result >= 0;
 #endif
 }
 
-bool fs_set_device_offset(Fs_Device *device, size_t offset) {
+bool fs_set_device_offset(Fs_Device device, size_t offset) {
 #ifdef _WIN32
-    // TODO(nic): I should separate offset in two 32bit int numbers and pass in separately here
-    return SetFilePointer(*device, offset, NULL, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
+    int32_t lo_off = (int32_t)((offset & 0x00000000FFFFFFFF));
+    int32_t hi_off = (int32_t)((offset & 0xFFFFFFFF00000000) >> 32);
+    return SetFilePointer(device, lo_off, &hi_off, FILE_BEGIN) != INVALID_SET_FILE_POINTER;
 #else
-    return lseek64(*device, offset, SEEK_SET) >= 0;
+    return lseek64(device, offset, SEEK_SET) >= 0;
 #endif
 }
 
-bool fs_close_device(Fs_Device *device) {
+bool fs_close_device(Fs_Device device) {
 #ifdef _WIN32
-    return CloseHandle(*device);
+    return CloseHandle(device);
 #else
-    return close(*device) == 0;
+    return close(device) == 0;
 #endif
 }
 
@@ -218,49 +219,12 @@ bool fs_wait_thread(Fs_Thread *thread) {
 #endif
 }
 
-bool fs_create_mutex(Fs_Mutex *mutex) {
-#ifdef _WIN32
-    *mutex = CreateMutex(NULL, false, NULL);
-    return *mutex != NULL;
-#else
-    errno = pthread_mutex_init(mutex, NULL);
-    return errno == 0;
-#endif
-}
-
-bool fs_lock_mutex(Fs_Mutex *mutex) {
-#ifdef _WIN32
-    return WaitForSingleObject(*mutex, INFINITE) != WAIT_FAILED;
-#else
-    errno = pthread_mutex_lock(mutex);
-    return errno == 0;
-#endif
-}
-
-bool fs_unlock_mutex(Fs_Mutex *mutex) {
-#ifdef _WIN32
-    return ReleaseMutex(*mutex);
-#else
-    errno = pthread_mutex_unlock(mutex);
-    return errno == 0;
-#endif
-}
-
-bool fs_free_mutex(Fs_Mutex *mutex) {
-#ifdef _WIN32
-    return CloseHandle(*mutex);
-#else
-    errno = pthread_mutex_destroy(mutex);
-    return errno == 0;
-#endif
-}
-
-bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
+bool fs_get_volume_size(Fs_Device device, size_t *volume_size) {
 #ifdef _WIN32
     GET_LENGTH_INFORMATION disk_length_info;
     DWORD bytes_returned;
     if (!DeviceIoControl(
-            *device, IOCTL_DISK_GET_LENGTH_INFO,
+            device, IOCTL_DISK_GET_LENGTH_INFO,
             NULL, 0, &disk_length_info,
             sizeof(GET_LENGTH_INFORMATION), &bytes_returned, NULL))
     {
@@ -269,7 +233,7 @@ bool fs_get_volume_size(Fs_Device *device, size_t *volume_size) {
     *volume_size = disk_length_info.Length.QuadPart;
     return true;
 #else
-    return ioctl(*device, BLKGETSIZE64, volume_size) == 0;
+    return ioctl(device, BLKGETSIZE64, volume_size) == 0;
 #endif
 }
 

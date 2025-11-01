@@ -14,7 +14,7 @@ typedef struct {
     Scan_Files files;
 } Scan_Ntfs_Device_Thread;
 
-bool read_ntfs_attr(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
+bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     int64_t known_size = offsetof(Ntfs_Attr, resident);
     int64_t bytes_read = fs_read_device(device, attr, known_size);
     if (bytes_read != known_size) {
@@ -66,7 +66,7 @@ bool read_ntfs_attr(Arena *arena, Fs_Device *device, Ntfs_Attr *attr) {
     return true;
 }
 
-bool find_ntfs_data(Arena *arena, Fs_Device *device, Ntfs_Attr *attr, size_t attrs_offset) {
+bool find_ntfs_data(Arena *arena, Fs_Device device, Ntfs_Attr *attr, size_t attrs_offset) {
     if (!fs_set_device_offset(device, attrs_offset)) {
         return false;
     }
@@ -86,7 +86,8 @@ bool find_ntfs_data(Arena *arena, Fs_Device *device, Ntfs_Attr *attr, size_t att
     assert(0 && "unreachable: no data attribute?");
 }
 
-bool get_bytes_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs, Scan_File_Builder *file_builder) {
+bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs, Scan_File_Builder *file_builder) {
+    if (offs == NULL) __asm__("int3");
     assert(attr.attr_type == 0x80 && "Not a Data attribute");
 
     if (!attr.non_resident_flag) {
@@ -103,7 +104,7 @@ bool get_bytes_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t
             break;
         }
 
-        uint8_t length_bytes_count = head & 0x0F;
+        uint8_t length_bytes_count = (head & 0x0F);
         uint8_t offset_bytes_count = (head & 0xF0) >> 4;
 
         uint32_t length_in_clusters = 0;
@@ -140,7 +141,7 @@ bool get_bytes_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t
     return true;
 }
 
-bool get_attr_offs_from_data(Arena *arena, Fs_Device *device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs) {
+bool get_attr_offs_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs) {
     assert(attr.attr_type == 0x80 && "Not a Data attribute");
     Arena temp_arena = {0};
     Scan_File_Builder file_builder = {0};
@@ -181,7 +182,7 @@ char *get_filename_from_attr(Arena *arena, Ntfs_Attr attr) {
     return name;
 }
 
-bool get_files_from_attr_offs(Arena *arena, Fs_Device *device, Offsets *offs, size_t cluster_size, Scan_Progress_Bar *progress_bar, Scan_Files *files) {
+bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, size_t cluster_size, Scan_Progress_Bar *progress_bar, Scan_Files *files) {
     Ntfs_Attr attr = {0};
 
     for (size_t i = 0; i < offs->count; ++i) {
@@ -231,7 +232,7 @@ Fs_Thread_Result start_ntfs_scan_device_thread(void *arg) {
     }
 
     Ntfs_Pbs pbs = {0};
-    int64_t bytes_read = fs_read_device(&device, &pbs, sizeof(pbs));
+    int64_t bytes_read = fs_read_device(device, &pbs, sizeof(pbs));
     if (bytes_read != sizeof(pbs)) {
         fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
         goto cleanup;
@@ -240,40 +241,40 @@ Fs_Thread_Result start_ntfs_scan_device_thread(void *arg) {
     size_t cluster_size = pbs.sectors_per_cluster * pbs.bytes_per_sector;
     size_t mft_offset = pbs.mft_cluster_number * cluster_size;
 
-    if (!fs_set_device_offset(&device, mft_offset)) {
+    if (!fs_set_device_offset(device, mft_offset)) {
         fprintf(stderr, "Error: could not set file pointer: %s\n", fs_get_last_error());
         goto cleanup;
     }
 
-    Ntfs_Record record;
-    bytes_read = fs_read_device(&device, &record, sizeof(record));
-    if (bytes_read != sizeof(record)) {
+    Ntfs_Record mft_record;
+    bytes_read = fs_read_device(device, &mft_record, sizeof(mft_record));
+    if (bytes_read != sizeof(mft_record)) {
         fprintf(stderr, "Error: could not read device: %s\n", fs_get_last_error());
         goto cleanup;
     }
 
-    size_t attrs_offset = mft_offset + record.attributes_offset;
+    size_t attrs_offset = mft_offset + mft_record.attributes_offset;
     Ntfs_Attr data_attr = {0};
-    if (!find_ntfs_data(&info->arena, &device, &data_attr, attrs_offset)) {
+    if (!find_ntfs_data(&info->arena, device, &data_attr, attrs_offset)) {
         fprintf(stderr, "Error: could not find mft data attribute: %s\n", fs_get_last_error());
         goto cleanup;
     }
 
     Offsets offsets = {0};
-    if (!get_attr_offs_from_data(&info->arena, &device, data_attr, cluster_size, &offsets)) {
+    if (!get_attr_offs_from_data(&info->arena, device, data_attr, cluster_size, &offsets)) {
         fprintf(stderr, "Error: could not get file records from mft: %s\n", fs_get_last_error());
         goto cleanup;
     }
     info->progress_report.bars[0].max_value = offsets.count;
 
-    if (!get_files_from_attr_offs(&info->arena, &device, &offsets, cluster_size, &info->progress_report.bars[0], &info->files)) {
+    if (!get_files_from_attr_offs(&info->arena, device, &offsets, cluster_size, &info->progress_report.bars[0], &info->files)) {
         fprintf(stderr, "Error: could not get file data from file records: %s\n", fs_get_last_error());
         goto cleanup;
     }
 
 cleanup:
     info->progress_report.done = true;
-    if (fs_is_device_valid(&device)) fs_close_device(&device);
+    if (fs_is_device_valid(device)) fs_close_device(device);
     return FS_THREAD_RESULT_OK;
 }
 

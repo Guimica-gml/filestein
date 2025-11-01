@@ -74,7 +74,7 @@ bool file_set_contains(File_Set *set, size_t file_offset) {
     return false;
 }
 
-void scan_extent(Arena *arena, Fs_Device *device, size_t extent_offset, size_t block_size, File_Set *file_set) {
+void scan_extent(Arena *arena, Fs_Device device, size_t extent_offset, size_t block_size, File_Set *file_set) {
     struct ext4_extent_header header;
     int64_t bytes_read = fs_read_device_off(device, &header, sizeof(header), extent_offset);
     assert(bytes_read == sizeof(header));
@@ -105,7 +105,7 @@ void scan_extent(Arena *arena, Fs_Device *device, size_t extent_offset, size_t b
     }
 }
 
-void scan_inode(Arena *arena, Fs_Device *device, size_t inode_offset, size_t block_size, File_Set *file_set) {
+void scan_inode(Arena *arena, Fs_Device device, size_t inode_offset, size_t block_size, File_Set *file_set) {
     struct ext4_inode inode;
     int64_t bytes_read = fs_read_device_off(device, &inode, sizeof(inode), inode_offset);
     assert(bytes_read == sizeof(inode));
@@ -137,24 +137,24 @@ Fs_Thread_Result start_scan_inode_thread(void *arg) {
 
         for (size_t j = 0; j < info->inodes_per_group; ++j) {
             size_t inode_offset = inode_table_offset + (info->inode_size * j);
-            scan_inode(&info->arena, &device, inode_offset, info->block_size, &info->file_set);
+            scan_inode(&info->arena, device, inode_offset, info->block_size, &info->file_set);
         }
 
         atomic_fetch_add(&info->progress_bar->value, 1);
     }
 
-    fs_close_device(&device);
+    fs_close_device(device);
     return FS_THREAD_RESULT_OK;
 }
 
-typedef bool(*Try_Parse_File_Func)(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Files *files);
+typedef bool(*Try_Parse_File_Func)(Arena *arena, Fs_Device device, size_t file_offset, Scan_Files *files);
 
 typedef struct {
     Nob_String_View magic;
     Try_Parse_File_Func try_parse_file;
 } File_Header_Entry;
 
-uint32_t read_uint32_be(Fs_Device *device) {
+uint32_t read_uint32_be(Fs_Device device) {
     uint8_t bytes[4];
     fs_read_device(device, &bytes[3], sizeof(uint8_t));
     fs_read_device(device, &bytes[2], sizeof(uint8_t));
@@ -168,7 +168,7 @@ uint32_t read_uint32_be(Fs_Device *device) {
 #define PNG_PARSE_MAX_FILE_SIZE (4096 * 1024 * 10)
 #define PNG_PARSE_MAX_CHUNK_SIZE (4096 * 10 * 2)
 
-bool try_parse_png(Arena *arena, Fs_Device *device, size_t file_offset, Scan_Files *files) {
+bool try_parse_png(Arena *arena, Fs_Device device, size_t file_offset, Scan_Files *files) {
     Scan_File file = {0};
     file.type = SCAN_FILE_TYPE_PNG;
 
@@ -261,7 +261,7 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
             continue;
         }
 
-        int64_t bytes_read = fs_read_device_off(&device, magic, max_magic_size, block_offset);
+        int64_t bytes_read = fs_read_device_off(device, magic, max_magic_size, block_offset);
         if (bytes_read < 0) {
             continue;
         }
@@ -275,7 +275,7 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
             }
 
             Arena_Mark mark = arena_snapshot(&info->arena);
-            bool success = header_entry.try_parse_file(&info->arena, &device, block_offset, &info->files);
+            bool success = header_entry.try_parse_file(&info->arena, device, block_offset, &info->files);
             if (success) break;
             arena_rewind(&info->arena, mark);
         }
@@ -294,7 +294,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
     }
 
     struct ext4_super_block super_block;
-    int64_t bytes_read = fs_read_device_off(&device, &super_block, sizeof(super_block), 0x400);
+    int64_t bytes_read = fs_read_device_off(device, &super_block, sizeof(super_block), 0x400);
     assert(bytes_read == sizeof(super_block));
 
     if (super_block.s_magic != 0xEF53) {
@@ -313,7 +313,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
     }
 
     size_t volume_size;
-    if (!fs_get_volume_size(&device, &volume_size)) {
+    if (!fs_get_volume_size(device, &volume_size)) {
         fprintf(stderr, "Error: coould not get partition size: %s\n", fs_get_last_error());
         goto cleanup;
     }
@@ -324,7 +324,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
 
     size_t group_descs_size = block_group_count * sizeof(struct ext4_group_desc);
     struct ext4_group_desc *group_descs = arena_alloc(&info->arena, group_descs_size);
-    bytes_read = fs_read_device_off(&device, group_descs, group_descs_size, 0x1000);
+    bytes_read = fs_read_device_off(device, group_descs, group_descs_size, 0x1000);
     assert(bytes_read == (int64_t) group_descs_size);
 
     size_t block_groups_per_cpu = block_group_count / info->threads_count;
@@ -394,7 +394,7 @@ Fs_Thread_Result start_scan_device_thread(void *arg) {
 
 cleanup:
     info->progress_report.done = true;
-    if (fs_is_device_valid(&device)) fs_close_device(&device);
+    if (fs_is_device_valid(device)) fs_close_device(device);
     return FS_THREAD_RESULT_OK;
 }
 

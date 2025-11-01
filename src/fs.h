@@ -19,7 +19,6 @@
 #include <windows.h>
 #include <winioctl.h>
 typedef HANDLE Fs_Device;
-typedef HANDLE Fs_Mutex;
 typedef HANDLE Fs_Thread;
 typedef DWORD Fs_Thread_Result;
 #define FS_THREAD_RESULT_OK 0
@@ -30,7 +29,6 @@ typedef DWORD Fs_Thread_Result;
 #include <sys/ioctl.h>
 #include <pthread.h>
 typedef int Fs_Device;
-typedef pthread_mutex_t Fs_Mutex;
 typedef pthread_t Fs_Thread;
 typedef void *Fs_Thread_Result;
 #define FS_THREAD_RESULT_OK NULL
@@ -63,25 +61,20 @@ typedef struct {
 
 bool fs_get_mount_points(Arena *arena, Fs_Mount_Points *mount_points);
 
-bool fs_is_device_valid(Fs_Device *device);
+bool fs_is_device_valid(Fs_Device device);
 bool fs_open_device(Fs_Device *device, Fs_Mount_Point *mount_point);
-int64_t fs_read_device(Fs_Device *device, void *buf, size_t count);
-int64_t fs_read_device_off(Fs_Device *device, void *buf, size_t count, size_t offset);
-bool fs_set_device_offset(Fs_Device *device, size_t offset);
-bool fs_get_device_offset(Fs_Device *device, size_t *offset);
-bool fs_close_device(Fs_Device *device);
+int64_t fs_read_device(Fs_Device device, void *buf, size_t count);
+int64_t fs_read_device_off(Fs_Device device, void *buf, size_t count, size_t offset);
+bool fs_set_device_offset(Fs_Device device, size_t offset);
+bool fs_get_device_offset(Fs_Device device, size_t *offset);
+bool fs_close_device(Fs_Device device);
 
 typedef Fs_Thread_Result (Fs_Thread_Routine)(void *);
 
 bool fs_spawn_thread(Fs_Thread *thread, Fs_Thread_Routine routine, void *data);
 bool fs_wait_thread(Fs_Thread *thread);
 
-bool fs_create_mutex(Fs_Mutex *mutex);
-bool fs_lock_mutex(Fs_Mutex *mutex);
-bool fs_unlock_mutex(Fs_Mutex *mutex);
-bool fs_free_mutex(Fs_Mutex *mutex);
-
-bool fs_get_volume_size(Fs_Device *device, size_t *volume_size);
+bool fs_get_volume_size(Fs_Device device, size_t *volume_size);
 size_t fs_get_cpu_count(void);
 
 const char *fs_get_last_error(void);
