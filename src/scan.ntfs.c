@@ -50,7 +50,7 @@ bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     }
 
     // NOTE(nic): There's padding until the next divisble by 8 address
-    if (attr->attr_type == 0x30 || attr->attr_type == 0x20 || attr->attr_type == 0x50 || attr->attr_type == 0x90) {
+    if (attr->attr_type == 0x20 || attr->attr_type == 0x30 || attr->attr_type == 0x90) {
         size_t curr_offset;
         if (!fs_get_device_offset(device, &curr_offset)) {
             return false;
@@ -86,8 +86,16 @@ bool find_ntfs_data(Arena *arena, Fs_Device device, Ntfs_Attr *attr, size_t attr
     assert(0 && "unreachable: no data attribute?");
 }
 
+static inline uint32_t read_bytes_to_uint32(uint8_t* buffer, size_t n) {
+    assert(n <= 4);
+    uint32_t result = 0;
+    for (size_t i = 0; i < n; ++i) {
+        result |= (uint32_t)buffer[i] << (i * 8);
+    }
+    return result;
+}
+
 bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs, Scan_File_Builder *file_builder) {
-    if (offs == NULL) __asm__("int3");
     assert(attr.attr_type == 0x80 && "Not a Data attribute");
 
     if (!attr.non_resident_flag) {
@@ -107,12 +115,10 @@ bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t 
         uint8_t length_bytes_count = (head & 0x0F);
         uint8_t offset_bytes_count = (head & 0xF0) >> 4;
 
-        uint32_t length_in_clusters = 0;
-        memcpy(&length_in_clusters, &attr.content[cursor], length_bytes_count);
+        uint32_t length_in_clusters = read_bytes_to_uint32(attr.content + cursor, length_bytes_count);
         cursor += length_bytes_count;
 
-        uint32_t offset_in_clusters = 0;
-        memcpy(&offset_in_clusters, &attr.content[cursor], offset_bytes_count);
+        uint32_t offset_in_clusters = read_bytes_to_uint32(attr.content + cursor, offset_bytes_count);
         cursor += offset_bytes_count;
 
         global_offset += offset_in_clusters * cluster_size;
@@ -196,6 +202,7 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
 
         Arena_Mark mark = arena_snapshot(arena);
         while (true) {
+            atomic_fetch_add(&progress_bar->value, 1);
             if (!read_ntfs_attr(arena, device, &attr)) {
                 return false;
             }
@@ -206,19 +213,17 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
                 if (!get_bytes_from_data(arena, device, attr, cluster_size, NULL, &file.bytes)) {
                     return false;
                 }
-            } else {
-                arena_rewind(arena, mark);
-                if (attr.attr_type == (uint32_t)0x00 || attr.attr_type == (uint32_t)0xFFFFFFFF) {
+            } else if (attr.attr_type == (uint32_t)0x00 || attr.attr_type == (uint32_t)0xFFFFFFFF) {
+                if (file.name != NULL && file.bytes.count > 0) {
+                    arena_da_append(arena, files, file);
+                } else {
+                    arena_rewind(arena, mark);
                     break;
                 }
             }
         }
-
-        if (file.name != NULL && file.bytes.count > 0) {
-            arena_da_append(arena, files, file);
-        }
-        atomic_fetch_add(&progress_bar->value, 1);
     }
+
     return true;
 }
 
