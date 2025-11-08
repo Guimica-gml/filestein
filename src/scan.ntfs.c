@@ -15,8 +15,18 @@ typedef struct {
 } Scan_Ntfs_Device_Thread;
 
 bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
-    int64_t known_size = offsetof(Ntfs_Attr, resident);
-    int64_t bytes_read = fs_read_device(device, attr, known_size);
+    int64_t attr_type_size = sizeof(attr->attr_type);
+    int64_t bytes_read = fs_read_device(device, &attr->attr_type, attr_type_size);
+    if (bytes_read != attr_type_size) {
+        return false;
+    }
+
+    if (attr->attr_type == 0xFFFFFFFF || attr->attr_type == 0x00) {
+        return true;
+    }
+
+    int64_t known_size = offsetof(Ntfs_Attr, resident) - attr_type_size;
+    bytes_read = fs_read_device(device, (uint8_t*)attr + attr_type_size, known_size);
     if (bytes_read != known_size) {
         return false;
     }
@@ -24,7 +34,7 @@ bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     int64_t bs_size = (attr->non_resident_flag)
         ? sizeof(attr->non_resident)
         : sizeof(attr->resident);
-    bytes_read = fs_read_device(device, (uint8_t*)attr + known_size, bs_size);
+    bytes_read = fs_read_device(device, (uint8_t*)attr + known_size + attr_type_size, bs_size);
     if (bytes_read != bs_size) {
         return false;
     }
@@ -40,7 +50,7 @@ bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     }
 
     int64_t content_length = (attr->non_resident_flag)
-        ? (attr->length - offsetof(Ntfs_Attr, name))
+        ? (attr->length - (attr->name_length * 2) - offsetof(Ntfs_Attr, name))
         : attr->resident.attr_length;
     attr->content = arena_alloc(arena, content_length);
     assert(attr->content != NULL);
@@ -50,17 +60,15 @@ bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     }
 
     // NOTE(nic): There's padding until the next divisble by 8 address
-    if (attr->attr_type == 0x20 || attr->attr_type == 0x30 || attr->attr_type == 0x90) {
-        size_t curr_offset;
-        if (!fs_get_device_offset(device, &curr_offset)) {
-            return false;
-        }
+    size_t curr_offset;
+    if (!fs_get_device_offset(device, &curr_offset)) {
+        return false;
+    }
 
-        size_t remainder = curr_offset % 8;
-        size_t final_offset = curr_offset + (8 - remainder);
-        if (!fs_set_device_offset(device, final_offset)) {
-            return false;
-        }
+    size_t remainder = curr_offset % 8;
+    size_t final_offset = curr_offset + (8 - remainder);
+    if (remainder != 0 && !fs_set_device_offset(device, final_offset)) {
+        return false;
     }
 
     return true;
@@ -95,7 +103,15 @@ static inline uint32_t read_bytes_to_uint32(uint8_t* buffer, size_t n) {
     return result;
 }
 
-bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs, Scan_File_Builder *file_builder) {
+bool get_bytes_from_data(
+    Arena *arena,
+    Fs_Device device,
+    Ntfs_Attr attr,
+    size_t cluster_size,
+    Scan_File_Type *type, // optional
+    Offsets *offs,        // optional
+    Scan_File_Builder *file_builder)
+{
     assert(attr.attr_type == 0x80 && "Not a Data attribute");
 
     if (!attr.non_resident_flag) {
@@ -106,6 +122,11 @@ bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t 
     size_t cursor = 0;
     size_t global_offset = 0;
 
+    if (type != NULL) {
+        *type = SCAN_FILE_TYPE_UNKNOWN;
+    }
+
+    bool first_run = true;
     while (true) {
         uint8_t head = attr.content[cursor++];
         if (head == 0) {
@@ -142,6 +163,17 @@ bool get_bytes_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t 
             return false;
         }
         file_builder->count += length;
+
+        if (type != NULL && first_run) {
+            // TODO(nic): add other types of files later (like pdf)
+            char *magic = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
+            int64_t magic_size = 8;
+            if (bytes_read < magic_size || memcmp(start, magic, magic_size) != 0) {
+                return true;
+            }
+            *type = SCAN_FILE_TYPE_PNG;
+        }
+        first_run = false;
     }
 
     return true;
@@ -153,7 +185,7 @@ bool get_attr_offs_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, siz
     Scan_File_Builder file_builder = {0};
 
     Offsets record_offs = {0};
-    if (!get_bytes_from_data(&temp_arena, device, attr, cluster_size, &record_offs, &file_builder)) {
+    if (!get_bytes_from_data(&temp_arena, device, attr, cluster_size, NULL, &record_offs, &file_builder)) {
         return false;
     }
 
@@ -193,16 +225,12 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
 
     for (size_t i = 0; i < offs->count; ++i) {
         Scan_File file = {0};
-        file.type = SCAN_FILE_TYPE_UNKNOWN;
-
         size_t off = offs->items[i];
         if (!fs_set_device_offset(device, off)) {
             return false;
         }
 
-        Arena_Mark mark = arena_snapshot(arena);
         while (true) {
-            atomic_fetch_add(&progress_bar->value, 1);
             if (!read_ntfs_attr(arena, device, &attr)) {
                 return false;
             }
@@ -210,18 +238,18 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
             if (attr.attr_type == 0x30) {
                 file.name = get_filename_from_attr(arena, attr);
             } else if (attr.attr_type == 0x80) {
-                if (!get_bytes_from_data(arena, device, attr, cluster_size, NULL, &file.bytes)) {
+                if (!get_bytes_from_data(arena, device, attr, cluster_size, &file.type, NULL, &file.bytes)) {
                     return false;
                 }
             } else if (attr.attr_type == (uint32_t)0x00 || attr.attr_type == (uint32_t)0xFFFFFFFF) {
-                if (file.name != NULL && file.bytes.count > 0) {
+                if (file.name != NULL && file.type != SCAN_FILE_TYPE_UNKNOWN && file.bytes.count > 0) {
                     arena_da_append(arena, files, file);
-                } else {
-                    arena_rewind(arena, mark);
-                    break;
                 }
+                break;
             }
         }
+
+        atomic_fetch_add(&progress_bar->value, 1);
     }
 
     return true;
@@ -309,8 +337,8 @@ Scan_Progress_Report scan_ntfs_get_progress_report(void *info) {
 
 void scan_ntfs_collect_files(void *info, Arena *arena, Scan_Files *files) {
     Scan_Ntfs_Device_Thread *scan_device = info;
-    for (size_t j = 0; j < scan_device->files.count; ++j) {
-        Scan_File *orig_file = &scan_device->files.items[j];
+    for (size_t i = 0; i < scan_device->files.count; ++i) {
+        Scan_File *orig_file = &scan_device->files.items[i];
         Scan_File copy_file = {0};
 
         size_t name_len = strlen(orig_file->name);
