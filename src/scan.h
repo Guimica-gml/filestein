@@ -11,6 +11,7 @@
 typedef enum {
     SCAN_FILE_TYPE_UNKNOWN,
     SCAN_FILE_TYPE_PNG,
+    SCAN_FILE_TYPE_PDF,
     SCAN_FILE_TYPE_COUNT,
 } Scan_File_Type;
 

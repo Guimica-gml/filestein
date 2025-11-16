@@ -14,14 +14,36 @@ typedef struct {
     Scan_Files files;
 } Scan_Ntfs_Device_Thread;
 
+static inline void debug_shit(Fs_Device device) {
+    size_t curr_offset;
+    bool success = fs_get_device_offset(device, &curr_offset);
+    assert(success);
+
+    char block[1024];
+    int64_t block_size = 1024;
+    int64_t bytes_read = fs_read_device(device, block, block_size);
+    assert(bytes_read == block_size);
+
+    success = fs_set_device_offset(device, curr_offset);
+    assert(success);
+
+    scan_hexdump(block, block_size, curr_offset);
+}
+
 bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
+    memset(attr, 0, sizeof(*attr));
+
+    printf("Next chunk:\n");
+    debug_shit(device);
+    printf("--------------\n");
+
     int64_t attr_type_size = sizeof(attr->attr_type);
     int64_t bytes_read = fs_read_device(device, &attr->attr_type, attr_type_size);
     if (bytes_read != attr_type_size) {
         return false;
     }
 
-    if (attr->attr_type == 0xFFFFFFFF || attr->attr_type == 0x00) {
+    if (attr->attr_type == 0xFFFFFFFF) {
         return true;
     }
 
@@ -41,17 +63,18 @@ bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
 
     if (attr->name_length > 0) {
         int64_t name_length = attr->name_length * 2;
-        attr->name = arena_alloc(arena, name_length);
+        attr->name = arena_alloc(arena, name_length + 1);
         assert(attr->name != NULL);
         bytes_read = fs_read_device(device, attr->name, name_length);
+        attr->name[name_length] = '\0';
         if (bytes_read != name_length) {
             return false;
         }
     }
 
     int64_t content_length = (attr->non_resident_flag)
-        ? (attr->length - (attr->name_length * 2) - offsetof(Ntfs_Attr, name))
-        : attr->resident.attr_length;
+        ? (attr->length - (attr->name_length * 2) - 64)
+        : (attr->length - (attr->name_length * 2) - 24);
     attr->content = arena_alloc(arena, content_length);
     assert(attr->content != NULL);
     bytes_read = fs_read_device(device, attr->content, content_length);
@@ -86,7 +109,7 @@ bool find_ntfs_data(Arena *arena, Fs_Device device, Ntfs_Attr *attr, size_t attr
         }
         if (attr->attr_type == 0x80) {
             return true;
-        } else if (attr->attr_type == (uint32_t)0xFFFFFFFF) {
+        } else if (attr->attr_type == 0xFFFFFFFF) {
             break;
         }
         arena_rewind(arena, mark);
@@ -119,6 +142,12 @@ bool get_bytes_from_data(
         return true;
     }
 
+    bool result = true;
+    size_t remember_offset;
+    if (!fs_get_device_offset(device, &remember_offset)) {
+        nob_return_defer(false);
+    }
+
     size_t cursor = 0;
     size_t global_offset = 0;
 
@@ -144,7 +173,7 @@ bool get_bytes_from_data(
 
         global_offset += offset_in_clusters * cluster_size;
         if (!fs_set_device_offset(device, global_offset)) {
-            return false;
+            nob_return_defer(false);
         }
 
         if (offs != NULL) {
@@ -160,23 +189,36 @@ bool get_bytes_from_data(
         uint8_t *start = &file_builder->items[file_builder->count];
         int64_t bytes_read = fs_read_device(device, start, length);
         if (bytes_read != length) {
-            return false;
+            nob_return_defer(false);
         }
         file_builder->count += length;
 
+        static_assert(SCAN_FILE_TYPE_COUNT == 3, "Amount of file types changed, please update code here!");
         if (type != NULL && first_run) {
-            // TODO(nic): add other types of files later (like pdf)
-            char *magic = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
-            int64_t magic_size = 8;
-            if (bytes_read < magic_size || memcmp(start, magic, magic_size) != 0) {
-                return true;
+            char *png_magic = "\x89\x50\x4E\x47\x0D\x0A\x1A\x0A";
+            int64_t png_magic_size = 8;
+
+            char *pdf_magic = "\x25\x50\x44\x46\x2D";
+            int64_t pdf_magic_size = 5;
+
+            if (bytes_read >= png_magic_size && memcmp(start, png_magic, png_magic_size) == 0) {
+                *type = SCAN_FILE_TYPE_PNG;
+            } else if (bytes_read >= pdf_magic_size && memcmp(start, pdf_magic, pdf_magic_size) == 0) {
+                *type = SCAN_FILE_TYPE_PDF;
+            } else {
+                *type = SCAN_FILE_TYPE_UNKNOWN;
+                nob_return_defer(true);
             }
-            *type = SCAN_FILE_TYPE_PNG;
         }
+
         first_run = false;
     }
 
-    return true;
+defer:
+    if (!fs_set_device_offset(device, remember_offset)) {
+        result = false;
+    }
+    return result;
 }
 
 bool get_attr_offs_from_data(Arena *arena, Fs_Device device, Ntfs_Attr attr, size_t cluster_size, Offsets *offs) {
@@ -225,11 +267,14 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
 
     for (size_t i = 0; i < offs->count; ++i) {
         Scan_File file = {0};
+        file.name = "UNNAMED FILE";
+
         size_t off = offs->items[i];
         if (!fs_set_device_offset(device, off)) {
             return false;
         }
 
+        Arena_Mark mark = arena_snapshot(arena);
         while (true) {
             if (!read_ntfs_attr(arena, device, &attr)) {
                 return false;
@@ -241,9 +286,11 @@ bool get_files_from_attr_offs(Arena *arena, Fs_Device device, Offsets *offs, siz
                 if (!get_bytes_from_data(arena, device, attr, cluster_size, &file.type, NULL, &file.bytes)) {
                     return false;
                 }
-            } else if (attr.attr_type == (uint32_t)0x00 || attr.attr_type == (uint32_t)0xFFFFFFFF) {
-                if (file.name != NULL && file.type != SCAN_FILE_TYPE_UNKNOWN && file.bytes.count > 0) {
+            } else if (attr.attr_type == 0xFFFFFFFF) {
+                if (file.type != SCAN_FILE_TYPE_UNKNOWN && file.bytes.count > 0) {
                     arena_da_append(arena, files, file);
+                } else {
+                    arena_rewind(arena, mark);
                 }
                 break;
             }

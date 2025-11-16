@@ -32,6 +32,7 @@ typedef struct {
 } Ui_Preview;
 
 void ui_load_preview(Ui_Preview *preview, Scan_File *file) {
+    static_assert(SCAN_FILE_TYPE_COUNT == 3, "Amount of file types changed, please update code here!");
     switch (file->type) {
     case SCAN_FILE_TYPE_PNG: {
         preview->image = LoadImageFromMemory(".png", file->bytes.items, file->bytes.count);
@@ -129,8 +130,9 @@ void DrawFileInfo(Rectangle rect, Ui_Preview *preview, Scan_File *file) {
         Rectangle source = {0, 0, preview->texture.width, preview->texture.height};
         DrawTexturePro(preview->texture, source, preview_rect, (Vector2){0}, 0.0f, WHITE);
     } break;
-    case UI_PREVIEW_BIN:
-        break; // TODO
+    case UI_PREVIEW_BIN: {
+        // TODO
+    } break;
     default:
         assert(0 && "unreachable");
     }

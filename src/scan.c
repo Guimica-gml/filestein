@@ -57,8 +57,10 @@ void scan_deinit(Scan scan) {
 }
 
 const char *scan_file_type_get_ext(Scan_File_Type type) {
+    static_assert(SCAN_FILE_TYPE_COUNT == 3, "Amount of file types changed, please update code here!");
     switch (type) {
     case SCAN_FILE_TYPE_UNKNOWN: return "bin";
+    case SCAN_FILE_TYPE_PDF: return "pdf";
     case SCAN_FILE_TYPE_PNG: return "png";
     default:
         assert(0 && "unreachable");
@@ -67,8 +69,10 @@ const char *scan_file_type_get_ext(Scan_File_Type type) {
 }
 
 const char *scan_file_type_to_cstr(Scan_File_Type type) {
+    static_assert(SCAN_FILE_TYPE_COUNT == 3, "Amount of file types changed, please update code here!");
     switch (type) {
     case SCAN_FILE_TYPE_UNKNOWN: return "UNKNOWN";
+    case SCAN_FILE_TYPE_PDF: return "PDF";
     case SCAN_FILE_TYPE_PNG: return "PNG";
     default:
         assert(0 && "unreachable");

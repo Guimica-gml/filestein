@@ -234,7 +234,8 @@ bool try_parse_png(Arena *arena, Fs_Device device, size_t file_offset, Scan_File
     return true;
 }
 
-static_assert(SCAN_FILE_TYPE_COUNT == 2, "Amount of file types changed, please update code here!");
+// TODO(nic): pdf is not supported here
+static_assert(SCAN_FILE_TYPE_COUNT == 3, "Amount of file types changed, please update code here!");
 static File_Header_Entry file_header_entries[] = {
     [SCAN_FILE_TYPE_UNKNOWN] = { .magic = SV(""),                                 .try_parse_file = NULL },
     [SCAN_FILE_TYPE_PNG]     = { .magic = SV("\x89\x50\x4E\x47\x0D\x0A\x1A\x0A"), .try_parse_file = try_parse_png },
