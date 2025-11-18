@@ -267,7 +267,7 @@ Fs_Thread_Result start_scan_chunk_thread(void *arg) {
             continue;
         }
 
-        for (size_t j = 1; j < SCAN_FILE_TYPE_COUNT; ++j) {
+        for (size_t j = 1; j < NOB_ARRAY_LEN(file_header_entries); ++j) {
             File_Header_Entry header_entry = file_header_entries[j];
             if (bytes_read < (int64_t) header_entry.magic.count
                 || memcmp(magic, header_entry.magic.data, header_entry.magic.count) != 0)

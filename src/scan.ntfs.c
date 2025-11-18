@@ -33,10 +33,6 @@ static inline void debug_shit(Fs_Device device) {
 bool read_ntfs_attr(Arena *arena, Fs_Device device, Ntfs_Attr *attr) {
     memset(attr, 0, sizeof(*attr));
 
-    printf("Next chunk:\n");
-    debug_shit(device);
-    printf("--------------\n");
-
     int64_t attr_type_size = sizeof(attr->attr_type);
     int64_t bytes_read = fs_read_device(device, &attr->attr_type, attr_type_size);
     if (bytes_read != attr_type_size) {
